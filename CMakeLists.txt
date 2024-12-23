@@ -49,5 +49,7 @@ target_compile_options(test_flash_attn PRIVATE
         --extended-lambda
         -O2
         -std=c++17
+        # -g
+        # -G
     >
 )

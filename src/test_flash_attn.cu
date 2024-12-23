@@ -5,15 +5,11 @@
 #include <cmath>
 #include <vector>
 
-// Helper function to initialize tensor data
+// Helper function to initialize tensor data with sequential numbers
 template<typename T>
-void initialize_tensor(T* data, size_t size, float min_val = -1.0f, float max_val = 1.0f) {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> dis(min_val, max_val);
-    
+void initialize_tensor(T* data, size_t size) {
     for (size_t i = 0; i < size; i++) {
-        data[i] = static_cast<T>(dis(gen));
+        data[i] = static_cast<T>((unsigned int)i);  // Fill with 1, 2, 3, 4, ...
     }
 }
 
@@ -115,9 +111,10 @@ int main() {
     cutlass::half_t *h_o = new cutlass::half_t[o_size];
     
     // Initialize input tensors
-    initialize_tensor(h_q, qk_size, -0.1f, 0.1f);
-    initialize_tensor(h_k, qk_size, -0.1f, 0.1f);
-    zero_initialize_tensor(h_o, o_size);
+    initialize_tensor(h_q, qk_size);
+    initialize_tensor(h_k, qk_size);
+    // zero_initialize_tensor(h_o, o_size);
+    initialize_tensor(h_o, o_size);
     
     // Allocate device memory
     cutlass::half_t *d_q, *d_k, *d_o;
@@ -128,6 +125,8 @@ int main() {
     // Copy data to device
     CHECK_CUDA(cudaMemcpy(d_q, h_q, qk_size * sizeof(cutlass::half_t), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_k, h_k, qk_size * sizeof(cutlass::half_t), cudaMemcpyHostToDevice));
+    // index o
+    CHECK_CUDA(cudaMemcpy(d_o, h_o, o_size * sizeof(cutlass::half_t), cudaMemcpyHostToDevice));
     
     // Initialize Flash Attention parameters
     Flash_fwd_params params;

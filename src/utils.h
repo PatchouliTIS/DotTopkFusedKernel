@@ -111,6 +111,16 @@ __forceinline__ __device__ void gemm(Tensor0 &acc, Tensor1 &tCrA, Tensor2 &tCrB,
     CUTE_STATIC_ASSERT_V(size<1>(tCsB) == size<1>(tCrB_copy_view));            // N
     if (!A_in_regs) { cute::copy(smem_tiled_copy_A, tCsA(_, _, _0{}), tCrA_copy_view(_, _, _0{})); }
     if (!B_in_regs) { cute::copy(smem_tiled_copy_B, tCsB(_, _, _0{}), tCrB_copy_view(_, _, _0{})); }
+#ifdef DEBUG
+    if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+        printf("\n---------------------------------------------\n");
+        printf("--- In gemm PREPROCESS ---\n");
+        printf("tCsA Total:\n");
+        print_tensor(tCsA);
+        print(tCsA.layout());
+        printf("\n---------------------------------------------\n");
+    }
+#endif
 
     #pragma unroll
     for (int i = 0; i < size<2>(tCrA); ++i) {
@@ -118,41 +128,84 @@ __forceinline__ __device__ void gemm(Tensor0 &acc, Tensor1 &tCrA, Tensor2 &tCrB,
             if (!A_in_regs) { cute::copy(smem_tiled_copy_A, tCsA(_, _, i + 1), tCrA_copy_view(_, _, i + 1)); }
             if (!B_in_regs) { cute::copy(smem_tiled_copy_B, tCsB(_, _, i + 1), tCrB_copy_view(_, _, i + 1)); }
         }
-        cute::gemm(tiled_mma, tCrA(_, _, i), tCrB(_, _, i), acc);
 #ifdef DEBUG
-        // printf("acc: %d, %d, %d\n", size<0>(acc), size<1>(acc), size<2>(acc));
-        // printf("acc: %d\n", acc.data());
+if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+        // print(size<2>(tCrA));
+        printf("\n---------------------------------------------\n");
+        printf("--- In gemm ITERATION ---\n");
+        printf("Current inner gemm iteration times: %d\n", i);
+        // printf("\n---------------------------------------------\n");
+        // print(acc);
+        // printf("\n---------------------------------------------\n");
+        // print(acc.shape());
+        // printf("\n---------------------------------------------\n");
+        // print(acc.size());
+        // printf("\n---------------------------------------------\n");
+        // print(acc.stride());
+        // printf("\n---------------------------------------------\n");
+        // for(int i = 0 ; i < size<0,0>(acc); i++) {
+        //     for(int j = 0 ; j < size<0,1>(acc); j++) {
+        //         for(int k = 0 ; k < size<1>(acc); k++) {
+        //             for(int l = 0 ; l < size<2>(acc); l++) {
+        //                 print(acc((i,j),k, l));
+        //                 printf(" ");
+        //             }
+        //             printf("\n");
+        //         }
+        //         printf("\n");
+        //     }
+        //     printf("\n");
+        // }
+        printf("tCsA i:\n");
+        print_tensor(tCsA(_, _, i));
+        print(tCsA(_, _, i).layout());
+        printf("\ntCsB i:\n");
+        print_tensor(tCsB(_, _, i));
+        print(tCsB(_, _, i).layout());
+        printf("\ncurrent acc_s Tensor:\n");
+        print_tensor(acc);
+        print(acc.layout());
+        printf("\n---------------------------------------------\n");
+    }
 #endif
+        cute::gemm(tiled_mma, tCrA(_, _, i), tCrB(_, _, i), acc);
     }
 #ifdef DEBUG
-        if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
-            // print(size<2>(tCrA));
-            printf("\n---------------------------------------------\n");
-            printf("--- In gemm RESULT ---\n");
-            printf("\n---------------------------------------------\n");
-            print(acc);
-            printf("\n---------------------------------------------\n");
-            print(acc.shape());
-            printf("\n---------------------------------------------\n");
-            print(acc.size());
-            printf("\n---------------------------------------------\n");
-            print(acc.stride());
-            printf("\n---------------------------------------------\n");
-            for(int i = 0 ; i < size<0,0>(acc); i++) {
-                for(int j = 0 ; j < size<0,1>(acc); j++) {
-                    for(int k = 0 ; k < size<1>(acc); k++) {
-                        for(int l = 0 ; l < size<2>(acc); l++) {
-                            print(acc((i,j),k, l));
-                            printf(" ");
-                        }
-                        printf("\n");
-                    }
-                    printf("\n");
-                }
-                printf("\n");
-            }
-            printf("\n---------------------------------------------\n");
-        }
+    if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+        // print(size<2>(tCrA));
+        printf("\n---------------------------------------------\n");
+        printf("--- In gemm RESULT ---\n");
+        printf("acc_s iteration times: ");
+        print(size<2>(tCrA));
+        printf("\n");
+        // printf("\n---------------------------------------------\n");
+        // print(acc);
+        // printf("\n---------------------------------------------\n");
+        // print(acc.shape());
+        // printf("\n---------------------------------------------\n");
+        // print(acc.size());
+        // printf("\n---------------------------------------------\n");
+        // print(acc.stride());
+        // printf("\n---------------------------------------------\n");
+        // for(int i = 0 ; i < size<0,0>(acc); i++) {
+        //     for(int j = 0 ; j < size<0,1>(acc); j++) {
+        //         for(int k = 0 ; k < size<1>(acc); k++) {
+        //             for(int l = 0 ; l < size<2>(acc); l++) {
+        //                 print(acc((i,j),k, l));
+        //                 printf(" ");
+        //             }
+        //             printf("\n");
+        //         }
+        //         printf("\n");
+        //     }
+        //     printf("\n");
+        // }
+        printf("acc_s Tensor:\n");
+        print_tensor(acc);
+        printf("acc_s Layout:\n");
+        print(acc.layout());
+        printf("\n---------------------------------------------\n");
+    }
 #endif
 }
 
@@ -164,45 +217,44 @@ __forceinline__ __device__ auto convert_type(Tensor<Engine, Layout> const &tenso
     cutlass::NumericArrayConverter<To_type, From_type, numel> convert_op;
 #ifdef DEBUG
     if(cute::thread0() && blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0) {
-        printf("\n---------------------------------------------\n");
-        printf("--- In convert_type BEFORE ---\n");
-        printf("\n---------------------------------------------\n");
-        print(tensor);
-        printf("\n---------------------------------------------\n");
-        print(tensor.shape());
-        printf("\n---------------------------------------------\n");
-        print(tensor.size());
-        printf("\n---------------------------------------------\n");
-        print(tensor.stride());
-        printf("\n---------------------------------------------\n");
-        for(int i = 0 ; i < size<0,0>(tensor); i++) {
-            for(int j = 0 ; j < size<0,1>(tensor); j++) {
-                for(int k = 0 ; k < size<1>(tensor); k++) {
-                    for(int l = 0 ; l < size<2>(tensor); l++) {
-                        print(tensor((i,j),k, l));
-                        printf(" ");
-                    }
-                    printf("\n");
-                }
-                printf("\n");
-            }
-            printf("\n");
-        }
-        printf("\n---------------------------------------------\n");
-
+        // printf("\n---------------------------------------------\n");
+        // printf("--- In convert_type BEFORE ---\n");
+        // printf("\n---------------------------------------------\n");
+        // print(tensor);
+        // printf("\n---------------------------------------------\n");
+        // print(tensor.shape());
+        // printf("\n---------------------------------------------\n");
+        // print(tensor.size());
+        // printf("\n---------------------------------------------\n");
+        // print(tensor.stride());
+        // printf("\n---------------------------------------------\n");
+        // for(int i = 0 ; i < size<0,0>(tensor); i++) {
+        //     for(int j = 0 ; j < size<0,1>(tensor); j++) {
+        //         for(int k = 0 ; k < size<1>(tensor); k++) {
+        //             for(int l = 0 ; l < size<2>(tensor); l++) {
+        //                 print(tensor((i,j),k, l));
+        //                 printf(" ");
+        //             }
+        //             printf("\n");
+        //         }
+        //         printf("\n");
+        //     }
+        //     printf("\n");
+        // }
+        // printf("\n---------------------------------------------\n");
     }
 #endif
     // HACK: this requires tensor to be "contiguous"
     auto frag = convert_op(*reinterpret_cast<const cutlass::Array<From_type, numel> *>(tensor.data()));
 #ifdef DEBUG
     if(cute::thread0() && blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0) {
-        printf("\n---------------------------------------------\n");
-        printf("--- In convert_type AFTER ---\n");
-        printf("\n---------------------------------------------\n");
-        for (int i = 0 ; i < frag.size(); ++i) {
-            print(frag[i]);
-            printf(" ");
-        }
+        // printf("\n---------------------------------------------\n");
+        // printf("--- In convert_type AFTER ---\n");
+        // printf("\n---------------------------------------------\n");
+        // for (int i = 0 ; i < frag.size(); ++i) {
+        //     print(frag[i]);
+        //     printf(" ");
+        // }
         // print(make_tensor(make_rmem_ptr<To_type>(&frag), tensor.layout()));
         // printf("\n---------------------------------------------\n");
         // print(make_tensor(make_rmem_ptr<To_type>(&frag), tensor.layout()).shape());

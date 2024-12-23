@@ -19,26 +19,6 @@ namespace flash {
 using namespace cute;
 
 
-// TODO: Rename ElementAccum
-template<typename ElementAccum, typename Params, int kBlockM, bool Is_even_MN, bool Is_even_K>
-__forceinline__ __device__ auto get_topk_tile(const Params &params, const int bidb, const int bidh, const int m_block, const BlockInfo</*Varlen=*/!Is_even_MN> &binfo) {
-        // topK O shape is [batch_size, nums_head, seq_len_q, topk]
-        auto gmem_ptr_topk = make_gmem_ptr(reinterpret_cast<ElementAccum*>(params.softmax_topk_ptr) + bidb * params.o_batch_stride);
-
-        auto topk_shape = make_shape(params.h, params.seqlen_q, params.topk);
-        auto topk_stride = make_stride(params.o_head_stride, params.o_row_stride, 1);
-
-        const int tidx = threadIdx.x;
-
-        auto topk_layout = make_layout(topk_shape, topk_stride);
-        Tensor mLSE = make_tensor(gmem_ptr_topk, topk_layout);
-        auto mLSE_slice = mLSE(bidh, _ , _);
-        // TODO: get index in N dimension, May Cause Error
-        // return global memory tensor VIEW
-        return local_tile(mLSE_slice, Shape<Int<kBlockM>, Int<1>>{}, make_coord(m_block, 0));
-}
-
-
 
 template<typename Kernel_traits, bool Is_even_MN, bool Is_even_K ,typename Params>
 inline __device__ void compute_rowwise_block(const Params &params, const int bidb, const int bidh, const int m_block) {
@@ -114,6 +94,10 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
     // clear(tSrQ);
     // clear(tSrK);
 
+    
+    // generate thread-level coordinate tensor acc_i on REGs for TOPK
+    Tensor acc_i = partition_fragment_C(tiled_mma, Shape<Int<kBlockM>, Int<kBlockN>>{});        // MMA , MMA_M, MMA_N
+    clear(acc_i);
 
 
     // Copy Atom retiling
@@ -139,6 +123,67 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
     Tensor tQpQ = make_tensor<bool>(make_shape(size<2>(tQsQ)));
     Tensor tKVpKV = make_tensor<bool>(make_shape(size<2>(tKsK)));
 
+#ifdef DEBUG
+    if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+        printf("\n---------------------------------------------\n");
+        printf("--- In compute_rowwise_block PROLOGUE ---\n");
+        printf("\n---------------------------------------------\n");
+        printf("gmem_tiled_copy_QKV:\n");
+        print(gmem_tiled_copy_QKV);
+        printf("\nKernel_traits::kBlockKSmem: ");
+        print(Kernel_traits::kBlockKSmem);
+        printf("\nKernel_traits::kGmemElemsPerLoad: ");
+        print(Kernel_traits::kGmemElemsPerLoad);
+        printf("\nKernel_traits::kNThreads: ");
+        print(Kernel_traits::kNThreads);
+        printf("\nKernel_traits::SmemCopyAtom: ");
+        print(typename Kernel_traits::SmemCopyAtom{});
+        printf("\nsmem_tiled_copy_Q: ");
+        print(smem_tiled_copy_Q);
+        // printf("\ngQ:\n");
+        // print_tensor(gQ);
+        printf("\ntQgQ:\n");
+        print_tensor(tQgQ);
+        printf("\ntQcQ:\n");
+        print_tensor(tQcQ);
+        printf("\ntQpQ:\n");
+        print_tensor(tQpQ);
+        printf("\ntiled_mma:\n");
+        print(tiled_mma);
+        printf("\ntiled_mma->layoutA_TV:\n");
+        print(tiled_mma.get_layoutA_TV());
+        printf("\ntiled_mma->layoutA_MK:\n");
+        print(tiled_mma.get_layoutA_MK());
+        printf("\ntiled_copy A shape:\n");
+        print(make_shape(tile_size<0>(tiled_mma),tile_size<2>(tiled_mma)));
+        printf("\ntSrQ:\n");
+        print(tSrQ);
+        printf("\ntSsQ: \n");
+        print(tSsQ);
+        printf("\ngO:\n");
+        print_tensor(gO);
+        printf("\ntSgS: \n");
+        print_tensor(tSgS);
+        printf("\n---------------------------------------------\n");
+    }
+    if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 1) {
+        printf("\n---------------------------------------------\n");
+        printf("--- In compute_rowwise_block PROLOGUE THREAD 1---\n");
+        printf("\n---------------------------------------------\n");
+         printf("tSgS: \n");
+        print_tensor(tSgS);
+        printf("\n---------------------------------------------\n");
+    }
+    if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 2) {
+        printf("\n---------------------------------------------\n");
+        printf("--- In compute_rowwise_block PROLOGUE THREAD 2 ---\n");
+        printf("\n---------------------------------------------\n");
+         printf("tSgS: \n");
+        print_tensor(tSgS);
+        printf("\n---------------------------------------------\n");
+    }
+#endif
+
 
     // Prologue
     // 
@@ -151,6 +196,7 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
     // clear(tKsK);
     flash::copy<Is_even_MN, Is_even_K>(gmem_tiled_copy_QKV, tKgK(_, _, _, 0), tKsK, tKVcKV, tKVpKV,
                                        binfo.actual_seqlen_k);
+    // launch async copy pipeline
     cute::cp_async_fence();
 
 
@@ -164,12 +210,7 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
         Tensor acc_s = partition_fragment_C(tiled_mma, Shape<Int<kBlockM>, Int<kBlockN>>{});  // (MMA=4, MMA_M, MMA_N)
         clear(acc_s);
 
-#ifdef DEBUG
-    // printf("acc_s' size: %d, %d, %d\n", size<0>(acc_s), size<1>(acc_s), size<2>(acc_s));
-    // printf("acc_s: %d\n", acc_s);
-    // printf("acc_s's shape: %d, %d\n", shape<0>(acc_s), shape<1>(acc_s), shape<2>(acc_s));
-#endif
-
+        // 2-level pipeline according to cute::cp_async_fence()
         flash::cp_async_wait<0>();
         __syncthreads();
 
@@ -184,96 +225,58 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
         // write back
         // DO NOT CONVERT TYPE HERE
         // Tensor rP = flash::convert_type<Element>(acc_s);
-#ifdef DEBUG
-        // if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
-            // print(size<2>(tCrA));
-            // printf("\n---------------------------------------------\n");
-            // printf("--- In compute_rowwise_block AFTER CONVERT TYPE rP RESULT ---\n");
-            // printf("\n---------------------------------------------\n");
-            // print(acc_s);
-            // printf("\n---------------------------------------------\n");
-            // print(acc_s.shape());
-            // printf("\n---------------------------------------------\n");
-            // print(acc_s.size());
-            // printf("\n---------------------------------------------\n");
-            // print(acc_s.stride());
-            // printf("\n---------------------------------------------\n");
-            // for(int i = 0 ; i < size<0,0>(acc_s); i++) {
-            //     for(int j = 0 ; j < size<0,1>(acc_s); j++) {
-            //         for(int k = 0 ; k < size<1>(acc_s); k++) {
-            //             for(int l = 0 ; l < size<2>(acc_s); l++) {
-            //                 print(acc_s((i,j),k, l));
-            //                 printf(" ");
-            //             }
-            //             printf("\n");
-            //         }
-            //         printf("\n");
-            //     }
-            //     printf("\n");
-            // }
-            // printf("\n---------------------------------------------\n");
-
-
-        //     printf("\n---------------------------------------------\n");
-        //     print(rP);
-        //     printf("\n---------------------------------------------\n");
-        //     print(rP.shape());
-        //     printf("\n---------------------------------------------\n");
-        //     print(rP.size());
-        //     printf("\n---------------------------------------------\n");
-        //     print(rP.stride());
-        //     printf("\n---------------------------------------------\n");
-        //     for(int i = 0 ; i < size<0,0>(rP); i++) {
-        //         for(int j = 0 ; j < size<0,1>(rP); j++) {
-        //             for(int k = 0 ; k < size<1>(rP); k++) {
-        //                 for(int l = 0 ; l < size<2>(rP); l++) {
-        //                     print(rP((i,j),k, l));
-        //                     printf(" ");
-        //                 }
-        //                 printf("\n");
-        //             }
-        //             printf("\n");
-        //         }
-        //         printf("\n");
-        //     }
-        //     printf("\n---------------------------------------------\n");
-        // }
-#endif
         // Tensor rP_drop = make_fragment_like(rP);
         // directly pass rP to gmem
 
 
 #ifdef DEBUG
-//         if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
-//             // print(size<2>(tCrA));
-//             printf("\n---------------------------------------------\n");
-//             printf("--- In compute_rowwise_block AFTER MAKE FRAGMENT LIKE rP_DROP RESULT ---\n");
-//             printf("\n---------------------------------------------\n");
-//             print(rP_drop);
-//             printf("\n---------------------------------------------\n");
-//             print(rP_drop.shape());
-//             printf("\n---------------------------------------------\n");
-//             print(rP_drop.size());
-//             printf("\n---------------------------------------------\n");
-//             print(rP_drop.stride());
-//             printf("\n---------------------------------------------\n");
-//             for(int i = 0 ; i < size<0,0>(rP_drop); i++) {
-//                 for(int j = 0 ; j < size<0,1>(rP_drop); j++) {
-//                     for(int k = 0 ; k < size<1>(rP_drop); k++) {
-//                         for(int l = 0 ; l < size<2>(rP_drop); l++) {
-//                             print(rP_drop((i,j),k, l));
-//                         }
-//                         printf("\n");
-//                     }
-//                     printf("\n");
-//                 }
-//                 printf("\n");
-//             }
-//             printf("\n---------------------------------------------\n");
-//         }
+        if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+            printf("\n---------------------------------------------\n");
+            printf("--- In compute_rowwise_block RESULT acc_s OUTPUTS THREAD 0---\n");
+            printf("\n---------------------------------------------\n");
+            print_tensor(acc_s);
+            printf("\n---------------------------------------------\n");
+        }
+
+
+        if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 1) {
+            printf("\n---------------------------------------------\n");
+            printf("--- In compute_rowwise_block RESULT acc_s OUTPUTS THREAD 1---\n");
+            printf("\n---------------------------------------------\n");
+            print_tensor(acc_s);
+            printf("\n---------------------------------------------\n");
+        }
 #endif
+        // directly pass value into gmem
         cute::copy(acc_s, tSgS);
         tSgS.data() = tSgS.data() + kBlockN;
+
+
+#ifdef DEBUG
+        if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+            printf("\n---------------------------------------------\n");
+            printf("--- In compute_rowwise_block RESULT tSgS THREAD 1 ---\n");
+            printf("\n---------------------------------------------\n");
+            print(tSgS);
+            printf("\n");
+            print_tensor(tSgS);
+            printf("\n");
+            print(tSgS.layout());
+            printf("\n---------------------------------------------\n");
+        }
+
+        if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 1) {
+            printf("\n---------------------------------------------\n");
+            printf("--- In compute_rowwise_block RESULT tSgS THREAD 1 ---\n");
+            printf("\n---------------------------------------------\n");
+            print(tSgS);
+            printf("\n");
+            print_tensor(tSgS);
+            printf("\n");
+            print(tSgS.layout());
+            printf("\n---------------------------------------------\n");
+        }
+#endif
 
 
 

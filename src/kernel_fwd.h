@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cute/tensor.hpp"
+#include <cmath>
 
 #include <cutlass/cutlass.h>
 #include <cutlass/array.h>
@@ -99,9 +100,9 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
     Tensor global_value = partition_fragment_C(tiled_mma, Shape<Int<kBlockM>, Int<kBlockN>>{});        // MMA , MMA_M, MMA_N
     // clear(acc_i);
     Tensor global_index = make_tensor_like<uint16_t>(global_value);
-    int strideInThr = layout<3>(tSgS);
-    int strideAmongThr = layout<0,0>();
-    flash::TopK<size<0,0>(global_value) * size<1>(global_value), size<0,1>(global_value) * size<2>(global_value), 0, 0, kBlockN, ElementAccum> topk;
+    int strideInThr = layout<2>(tSgS);
+    int strideAmongThr = 32 >> 4;   // layout<0,0>TiledMMA.Layout_C / Atom_MMA_M
+    flash::TopK<size<0,0>(global_value) * size<1>(global_value), size<0,1>(global_value) * size<2>(global_value), sqrt(strideInThr), sqrt(strideAmongThr), kBlockN, ElementAccum> topk;
 
 
     // Copy Atom retiling
@@ -224,9 +225,7 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
             smem_thr_copy_Q, smem_thr_copy_K
         );
 
-
-
-        // TOPK
+        
 
 
 #ifdef DEBUG
@@ -246,10 +245,10 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
             print_tensor(acc_s);
             printf("\n---------------------------------------------\n");
         }
-#endif
-        // directly pass value into gmem
-        cute::copy(acc_s, tSgS);
-        tSgS.data() = tSgS.data() + kBlockN;
+// #endif
+//         // directly pass value into gmem
+//         cute::copy(acc_s, tSgS);
+//         tSgS.data() = tSgS.data() + kBlockN;
 
 
 #ifdef DEBUG
@@ -290,7 +289,19 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
                                                binfo.actual_seqlen_k);
             cute::cp_async_fence();
         }
+
+
+
+        const int offset_blk = step;
+        // TOPK
+        (step == 0)
+            ? topk.template topk_index<true, offset_blk>(acc_s, global_index, global_value, tidx)
+            : topk.template topk_index<false, offset_blk>(acc_s, global_index, global_value, tidx);
     }
+
+
+    cute::copy(global_index, tSgS);
+    // tSgS.data() = tSgS.data() + kBlockN;
 
 }
 

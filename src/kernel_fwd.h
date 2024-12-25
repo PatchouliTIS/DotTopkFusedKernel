@@ -96,8 +96,12 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
 
     
     // generate thread-level coordinate tensor acc_i on REGs for TOPK
-    Tensor acc_i = partition_fragment_C(tiled_mma, Shape<Int<kBlockM>, Int<kBlockN>>{});        // MMA , MMA_M, MMA_N
-    clear(acc_i);
+    Tensor global_value = partition_fragment_C(tiled_mma, Shape<Int<kBlockM>, Int<kBlockN>>{});        // MMA , MMA_M, MMA_N
+    // clear(acc_i);
+    Tensor global_index = make_tensor_like<uint16_t>(global_value);
+    int strideInThr = layout<3>(tSgS);
+    int strideAmongThr = layout<0,0>();
+    flash::TopK<size<0,0>(global_value) * size<1>(global_value), size<0,1>(global_value) * size<2>(global_value), 0, 0, kBlockN, ElementAccum> topk;
 
 
     // Copy Atom retiling
@@ -215,18 +219,14 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
         __syncthreads();
 
         // BlockQ, BlockK already in shared memory
-
         flash::gemm</*A_in_regs=*/false>(
             acc_s, tSrQ, tSrK, tSsQ, tSsK, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K,
             smem_thr_copy_Q, smem_thr_copy_K
         );
 
-        // printf("acc_s: %d\n", acc_s(0,1,1));
-        // write back
-        // DO NOT CONVERT TYPE HERE
-        // Tensor rP = flash::convert_type<Element>(acc_s);
-        // Tensor rP_drop = make_fragment_like(rP);
-        // directly pass rP to gmem
+
+
+        // TOPK
 
 
 #ifdef DEBUG

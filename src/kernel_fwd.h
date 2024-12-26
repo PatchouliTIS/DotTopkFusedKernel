@@ -39,6 +39,7 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
     constexpr int kBlockN = Kernel_traits::kBlockN;
     constexpr int kHeadDim = Kernel_traits::kHeadDim;
     constexpr int kNWarps = Kernel_traits::kNWarps;
+    constexpr int kTopk = Kernel_traits::topK;
 
 
     // [batch_size, nums_head, seq_lens, head_dim]
@@ -63,10 +64,21 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
                             make_stride(params.k_head_stride, params.k_row_stride, _1{}));
     Tensor gK = local_tile(mK(bidh / params.h_h_k_ratio,_,_), Shape<Int<kBlockN>, Int<kHeadDim>>{}, make_coord(_, 0)); // [kBlockN, kHeadDim, nblocks]
 
+
+    // TODO: remove gO from kernel, no need to store it in gmem
     // O shape: [batch_size, nums_head, seq_len_q, seq_len_k]
     Tensor gO = make_tensor(make_gmem_ptr(reinterpret_cast<Element*>(params.o_ptr) + row_offset_p),
                             Shape<Int<kBlockM>, Int<kBlockN>>{},
                             make_stride(params.seqlen_k_rounded, _1{}));
+
+    // IDO shape: [batch_size, nums_head, seq_len_q, topk]  for topk index output
+    // Every Block of IDO is [kBlockM, kTopk]
+    const index_t row_offset_ido = ((bidb * params.h + bidh) * params.seqlen_q_rounded + m_block * kBlockM) * params.topk;
+    Tensor gIDO = make_tensor(make_gmem_ptr(reinterpret_cast<index_t*>(params.ido_ptr) + row_offset_ido),
+                            Shape<Int<kBlockM>, Int<kTopk>>{},
+                            make_stride(Int<kTopk>, _1{}));
+
+
 
     // Shared Memory
     Tensor sQ = make_tensor(make_smem_ptr(reinterpret_cast<Element*>(smem_)),
@@ -97,13 +109,22 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
 
     
     // generate thread-level coordinate tensor acc_i on REGs for TOPK
-    Tensor global_value = partition_fragment_C(tiled_mma, Shape<Int<kBlockM>, Int<kBlockN>>{});        // MMA , MMA_M, MMA_N
+    Tensor tIrI = partition_fragment_C(tiled_mma, Shape<Int<kBlockM>, Int<kBlockN>>{});                     // MMA=(2,2) , MMA_M=1, MMA_N=8
+    Tensor global_value = make_tensor(tIrI.data(), flash::convert_layout_acc_rowcol(tIrI.layout()));        // ((2, MMA_M), (2, MMA_N))
     // clear(acc_i);
-    Tensor global_index = make_tensor_like<uint16_t>(global_value);
+    Tensor global_index = make_tensor_like<index_t>(global_value);
     int strideInThr = layout<2>(tSgS);
     int strideAmongThr = 32 >> 4;   // layout<0,0>TiledMMA.Layout_C / Atom_MMA_M
-    flash::TopK<size<0,0>(global_value) * size<1>(global_value), size<0,1>(global_value) * size<2>(global_value), sqrt(strideInThr), sqrt(strideAmongThr), kBlockN, ElementAccum> topk;
-
+    flash::TopK<size<0,0>(global_value) * size<1>(global_value), size<0,1>(global_value) * size<2>(global_value), static_cast<int>(sqrt(strideInThr)), static_cast<int>(sqrt(strideAmongThr)), kBlockN, Element, index_t> topk;
+#ifdef DEBUG
+    if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+        printf("\n---------------------------------------------\n");
+        printf("--- TOPK PARAMS CHECK ---\n");
+        printf("\n---------------------------------------------\n");
+        printf("strideBitInThr: %d, strideBitAmongThr: %d\n", static_cast<int>(sqrt(strideInThr)), static_cast<int>(sqrt(strideAmongThr)));
+        printf("\n---------------------------------------------\n");
+    }
+#endif
 
     // Copy Atom retiling
     // Smem -> Register for MMA calculation
@@ -299,9 +320,84 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
             : topk.template topk_index<false, offset_blk>(acc_s, global_index, global_value, tidx);
     }
 
+#ifdef DEBUG
+    if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+        printf("\n---------------------------------------------\n");
+        printf("--- In TopK ROW COMPLETE RESULT global_index ---\n");
+        printf("\n---------------------------------------------\n");
+        print_tensor(global_index);
+        printf("\n---------------------------------------------\n");
+    }
+#endif
 
-    cute::copy(global_index, tSgS);
-    // tSgS.data() = tSgS.data() + kBlockN;
+
+    // Copy IDO to gmem
+
+    // First, do warp-shuffle to dispatch values to each thread.
+    // WHY WE DO THAT?
+    // After collect the topk index from each thread, the first thread of very 4 threads (cuz we do a 16-size bitonic topk among 64 values in a row) within a warp has the total data, which should be copied to gmem.
+    // The mapping are demostrated as below:
+    // thread 0 global_index in shape (2, 16) (converted from ((2,2),1,8))
+    // thread coordinate --->  gIDO gmem coordinate (gmem shape is (block_m=64,topk=16))
+    //      ( 0 , 0 )   ---->  ( 0 , 0 )      ( 0 , 1 )   ---->  ( 0 , 1 )   ( 0 , 2 )   ---->  ( 0 , 2 ) .....   ( 0 , 14 ) ----> ( 0, 14 )   ( 0, 15 ) ----> ( 0, 15 )
+    //      ( 1 , 0 )   ---->  ( 8 , 0 )      ( 1 , 1 )   ---->  ( 8 , 1 )   ( 1 , 2 )   ---->  ( 8 , 2 ) .....   ( 1 , 14 ) ----> ( 8, 14 )   ( 1, 15 ) ----> ( 8, 15 )
+    //                           ^ this STRIDE or LAYOUT also defined at MMA_Atom.Layout_C: LayoutC_TV: ((_4,_8),(_2,_2)):((_32,_1),(_16,_8))
+    //                                                                                                                                    ^                                                                
+
+    // 1. init final tensor
+    Tensor tIgI = make_tensor<index_t>(make_shape(_1, _8));
+    clear(tIgI);
+    if(tidx & 0x11 == 0) {
+        #pragma unroll
+        for(int i = 0; i < 8; i++) {
+            tIgI(0,i) = global_index(0, i);
+        }
+    }
+
+    // 2. warp-shuffle to dispatch values to each thread
+    // T0 --> T1
+    #pragma unroll
+    for(int i = 8; i < 16; i++) {
+        warp_scatter_index(global_index(0, i), 1, 4, 0x88888888);
+    }
+    if(tidx & 0x11 == 1) {
+        #pragma unroll
+        for(int i = 8; i < 16; i++) {
+            tIgI(0,i-8) = global_index(0, i);
+        }
+    }
+
+    // T0 --> T2
+    #pragma unroll
+    for(int i = 0; i < 8; i++) {
+        warp_scatter_index(global_index(1, i),  2, 4, 0x88888888);
+    }
+    if(tidx & 0x11 == 2) {
+        #pragma unroll
+        for(int i = 0; i < 8; i++) {
+            tIgI(0,i) = global_index(1, i);
+        }
+    }
+
+    // T0 --> T3
+    #pragma unroll
+    for(int i = 8; i < 16; i++) {
+        warp_scatter_index(global_index(1, i), 3, 4, 0x88888888);
+    }
+    if(tidx & 0x11 == 3) {
+        #pragma unroll
+        for(int i = 8; i < 16; i++) {
+            tIgI(0,i-8) = global_index(1, i);
+        }
+    }
+
+
+    // 2. init Tiled_Copy
+    typename Kernel_traits::GmemTiledCopyIDO gmem_tiled_copy_IDO;
+    auto gmem_thr_copy_IDO = gmem_tiled_copy_IDO.get_thread_slice(tidx);
+    Tensor tIgI_D = gmem_thr_copy_IDO.partition_D(gIDO);
+
+    cute::copy(gmem_tiled_copy_IDO,tIgI, tIgI_D);
 
 }
 

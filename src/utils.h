@@ -22,8 +22,6 @@
 
 
 namespace flash {
-
-
 template <bool Is_even_MN=true, bool Is_even_K=true, bool Clear_OOB_MN=false, bool Clear_OOB_K=true,
         typename TiledCopy, typename Engine0, typename Layout0, typename Engine1, typename Layout1,
         typename Engine2, typename Layout2, typename Engine3, typename Layout3>
@@ -89,6 +87,15 @@ __forceinline__ __device__ void copy(TiledCopy tiled_copy, Tensor<Engine0, Layou
     //         }
     //     }
     // }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Thr_tile Bitonic Sort
+template<typename IDX>
+__forceinline__ __device__  void warp_scatter_index(IDX &idx, const int &offset, const int &stride, const unsigned int &mask = 0xffffffff) {
+    idx = __shfl_up_sync(mask, idx, offset, stride);
+    return;
 }
 
 

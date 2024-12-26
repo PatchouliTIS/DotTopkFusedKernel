@@ -23,7 +23,7 @@ struct Flash_kernel_traits {
     static constexpr bool Has_cp_async = false;
 #endif
     using ElementAccum = float;
-    using index_t = int64_t;
+    using index_t = uint16_t;
 
 #if defined(__CUDA_ARCH__) &&  __CUDA_ARCH__ >= 800
     using MMA_Atom_Arch = std::conditional_t<
@@ -45,7 +45,7 @@ struct Flash_kernel_traits {
 };
 
 // If Share_Q_K_smem is true, that forces Is_Q_in_regs to be true
-template<int kHeadDim_, int kBlockM_, int kBlockN_, int kNWarps_, bool Is_Q_in_regs_=false, bool Share_Q_K_smem_=false, typename elem_type=cutlass::half_t,
+template<int kHeadDim_, int kBlockM_, int kBlockN_, int kNWarps_, int topK_=16, bool Is_Q_in_regs_=false, bool Share_Q_K_smem_=false,typename elem_type=cutlass::half_t,
          typename Base=Flash_kernel_traits<kHeadDim_, kBlockM_, kBlockN_, kNWarps_, elem_type> >
 struct Flash_fwd_kernel_traits : public Base {
     using Element = typename Base::Element;
@@ -61,6 +61,7 @@ struct Flash_fwd_kernel_traits : public Base {
     // The number of threads.
     static constexpr int kNWarps = kNWarps_;
     static constexpr int kNThreads = kNWarps * 32;
+    static constexpr int topK = topK_;
 
     static constexpr int kBlockM = kBlockM_;
     static constexpr int kBlockN = kBlockN_;
@@ -155,4 +156,13 @@ struct Flash_fwd_kernel_traits : public Base {
         make_tiled_copy(Copy_Atom<AutoVectorizingCopyWithAssumedAlignment<128>, Element>{},
                         GmemLayoutAtomRotcossin{},
                         Layout<Shape < _1, _8>>{}));  // Val layout, 8 vals per load
+
+    // TiledCopy for IDO
+    static constexpr int kIDOThreadsPerRow = topK / kGmemElemsPerLoad; // 2
+    using GmemLayoutAtomIDO = Layout<Shape < Shape <Int<kNThreads / kIDOThreadsPerRow / 8, _8>>, Int<kIDOThreadsPerRow>>,
+                                  Stride< Stride <Int<kIDOThreadsPerRow / 2>, _2>, _1>>; // thr layout:((64, 2) : (2, 1))  --> gmem IDO layout: ((64, 16) : (16, 1))  Each thread load 8 elements, and each row has 2 threads.   
+    using GmemTiledCopyIDO = decltype(
+        make_tiled_copy(Copy_Atom<AutoVectorizingCopyWithAssumedAlignment<128>, index_t>{},
+                        GmemLayoutAtomIDO{},
+                        Layout<Shape < _1, _8>>{}));  // Val layout, 8 vals per load    
 };

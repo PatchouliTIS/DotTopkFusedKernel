@@ -21,7 +21,7 @@
 
 #define ORDERV(x,idx,row,a,b) { bool swap = reverse ^ (x[row][a]<x[row][b]); \
       T auxa = x[row][a]; \
-      uint16_t auxidx = idx[row][a]; \
+      IDX auxidx = idx[row][a]; \
       if (swap) { x[row][a] = x[row][b]; x[row][b] = auxa; idx[row][a] = idx[row][b]; idx[row][b] = auxidx; } }
 
 #define B2V(x,idx,row,a) { ORDERV(x,idx,row,a,a+1) }
@@ -35,10 +35,10 @@ namespace flash {
 
 using namespace cute;
 
-template<int kNRows, int kNCols, int strideBitInThr, int strideBitAmongThr, int Block_N, typename T>
+template<int kNRows, int kNCols, int strideBitInThr, int strideBitAmongThr, int Block_N, typename T, typename IDX>
 struct TopK {
 private:
-    // using TensorIndex = decltype(make_tensor<uint16_t>(Shape<Int<kNRows>, Int<kNCols>>{}));
+    // using TensorIndex = decltype(make_tensor<IDX>(Shape<Int<kNRows>, Int<kNCols>>{}));
     // using TensorValue = decltype(make_tensor<T>(Shape<Int<kNRows>, Int<kNCols>>{}));
     // TensorIndex global_index;
     // TensorValue global_value;
@@ -46,9 +46,9 @@ private:
     __forceinline__ __device__ TopK() {}
 
     // Thr_tile Bitonic Sort
-    __forceinline__ __device__  void warp_reduce_pairs(T& val, uint16_t &idx, unsigned mask = 0xffffffff) {
+    __forceinline__ __device__  void warp_reduce_pairs(T& val, IDX &idx, unsigned mask = 0xffffffff) {
         T max_val = MAX_VALUE(val, __shfl_down_sync(mask, val, 1, 2));
-        uint16_t other_idx = __shfl_down_sync(mask, idx, 1, 2);
+        IDX other_idx = __shfl_down_sync(mask, idx, 1, 2);
 
         // exchange happens
         if(!IS_FLOAT_EQUAL(max_val, val)) {
@@ -59,10 +59,10 @@ private:
         return;
     }
 
-    __forceinline__ __device__ static void warp_reduce_quads(T& val, uint16_t &idx, const unsigned int &tid, unsigned mask = 0xffffffff) {
+    __forceinline__ __device__ static void warp_reduce_quads(T& val, IDX &idx, const unsigned int &tid, unsigned mask = 0xffffffff) {
         const uint32_t lane_id = tid & 0x1f;
         T max_val = MAX_VALUE(val, __shfl_down_sync(mask, val, 2, 4));
-        uint16_t other_idx = __shfl_down_sync(mask, idx, 2, 4);
+        IDX other_idx = __shfl_down_sync(mask, idx, 2, 4);
 
         if ((lane_id & 0x3) == 0) {
             if(!IS_FLOAT_EQUAL(max_val, val)) {
@@ -86,8 +86,8 @@ public:
         TensorIndex cur_idx;
         // The number of elements between two threads within one row are defined by layout<0,0>TiledMMA.Layout_C / Atom_MMA_M
         //                                                                                                  32   /   16
-        uint16_t offset_blk = n_idx * Block_N;
-        uint16_t offset_thr = ((tid >> 1) << strideBitAmongThr);
+        IDX offset_blk = n_idx * Block_N;
+        IDX offset_thr = ((tid >> 1) << strideBitAmongThr);
         #pragma unroll
         for(int row = 0; row < kNRows; row++) {
             #pragma unroll
@@ -211,15 +211,15 @@ public:
             
 
             // Step6: Update global topk index in reg memory (first or not)
-            Tensor acc_o = make_tensor(global_value.data(), flash::convert_layout_acc_rowcol(global_value.layout()));
-            Tensor idx_o = make_tensor(global_index.data(), flash::convert_layout_acc_rowcol(global_index.layout()));
+            // Tensor acc_o = make_tensor(global_value.data(), flash::convert_layout_acc_rowcol(global_value.layout()));
+            // Tensor idx_o = make_tensor(global_index.data(), flash::convert_layout_acc_rowcol(global_index.layout()));
             if(Is_first) {
                 #pragma unroll
                 for(int row = 0; row < kNRows; row++) {
                     #pragma unroll
                     for(int col = 0; col < kNCols; col++) {
-                        idx_o[row][col] = cur_idx[row][col];
-                        acc_o[row][col] = scores[row][col];
+                        global_index[row][col] = cur_idx[row][col];
+                        global_value[row][col] = scores[row][col];
                     }
                 }
             } else {   
@@ -228,9 +228,9 @@ public:
                 for(int row = 0; row < kNRows; row++) {
                     #pragma unroll
                     for(int col = 0; col < kNCols; col++) {
-                        if (!IS_FLOAT_EQUAL(MAX_VALUE(acc_o[row][col], scores[row][col]), acc_o[row][col])) {
-                            idx_o[row][col] = cur_idx[row][col];
-                            acc_o[row][col] = scores[row][col];
+                        if (!IS_FLOAT_EQUAL(MAX_VALUE(global_value[row][col], scores[row][col]), global_value[row][col])) {
+                            global_index[row][col] = cur_idx[row][col];
+                            global_value[row][col] = scores[row][col];
                         }
                     }
                 }
@@ -242,23 +242,23 @@ public:
                     #pragma unroll
                     for (int i=0; i< kNCols; i+=2) {
                         reverse = ((i >> 1) + 1)&1;
-                        B2V(acc_o, idx_o, row, i);
+                        B2V(global_value, global_index, row, i);
                     }
                     // 4-stride bitonic sort
                     #pragma unroll
                     for (int i=0; i< kNCols; i+=4) {
                         reverse = ((i >> 2) + 1)&1;
-                        B4V(acc_o, idx_o, row, i);
+                        B4V(global_value, global_index, row, i);
                     }
                     // 8-stride bitonic sort
                     #pragma unroll
                     for (int i=0; i< kNCols; i+=8) {
                         reverse = ((i >> 3) + 1)&1;
-                        B8V(acc_o, idx_o, row, i);
+                        B8V(global_value, global_index, row, i);
                     }
                     // final 16 elements bitonic sort, reverse according to current  thread id
                     reverse = false;
-                    B16V(acc_o, idx_o, row, 0);
+                    B16V(global_value, global_index, row, 0);
                 }
             }
         }

@@ -43,6 +43,12 @@ struct Qkv_params {
 
 struct Flash_fwd_params : public Qkv_params {
 
+    void *__restrict__ ido_ptr;     // [batch_size, num_heads, seq_len_q, topk]
+
+    index_t ido_batch_stride;
+    index_t ido_head_stride;
+    index_t ido_row_stride;
+    
     // The dimensions.
     int b, seqlen_q, seqlen_k, seqlen_knew, d, seqlen_q_rounded, seqlen_k_rounded, d_rounded, rotary_dim, total_q, topk;
 

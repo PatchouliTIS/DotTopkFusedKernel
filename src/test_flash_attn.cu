@@ -100,32 +100,38 @@ int main() {
     const int num_heads = 1;
     const int seq_len = 64;
     const int head_dim = 128;
+    const int topk = 16;
     
     // Calculate sizes
     const size_t qk_size = batch_size * num_heads * seq_len * head_dim;
     const size_t o_size = batch_size * num_heads * seq_len * seq_len;
+    const size_t topk_size = batch_size * num_heads * seq_len * topk;
     
     // Allocate host memory
     cutlass::half_t *h_q = new cutlass::half_t[qk_size];
     cutlass::half_t *h_k = new cutlass::half_t[qk_size];
     cutlass::half_t *h_o = new cutlass::half_t[o_size];
+    uint32_t *h_ido = new uint32_t[topk_size];
     
     // Initialize input tensors
     initialize_tensor(h_q, qk_size);
     initialize_tensor(h_k, qk_size);
     // zero_initialize_tensor(h_o, o_size);
     initialize_tensor(h_o, o_size);
-    
+    zero_initialize_tensor(h_ido, topk_size);
+
     // Allocate device memory
     cutlass::half_t *d_q, *d_k, *d_o;
+    uint32_t *d_ido;
     CHECK_CUDA(cudaMalloc(&d_q, qk_size * sizeof(cutlass::half_t)));
     CHECK_CUDA(cudaMalloc(&d_k, qk_size * sizeof(cutlass::half_t)));
     CHECK_CUDA(cudaMalloc(&d_o, o_size * sizeof(cutlass::half_t)));
+    CHECK_CUDA(cudaMalloc(&d_ido, topk_size * sizeof(uint32_t)));
     
     // Copy data to device
     CHECK_CUDA(cudaMemcpy(d_q, h_q, qk_size * sizeof(cutlass::half_t), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_k, h_k, qk_size * sizeof(cutlass::half_t), cudaMemcpyHostToDevice));
-    // index o
+    // TEST: index o
     CHECK_CUDA(cudaMemcpy(d_o, h_o, o_size * sizeof(cutlass::half_t), cudaMemcpyHostToDevice));
     
     // Initialize Flash Attention parameters
@@ -133,7 +139,7 @@ int main() {
     params.q_ptr = d_q;
     params.k_ptr = d_k;
     params.o_ptr = d_o;
-    
+    params.ido_ptr = d_ido;
     // Set dimensions
     params.b = batch_size;
     params.h = num_heads;
@@ -143,7 +149,7 @@ int main() {
     params.seqlen_q_rounded = seq_len;
     params.seqlen_k_rounded = seq_len;
     params.d_rounded = head_dim;
-    
+    params.topk = topk;
     // Set strides
     params.q_batch_stride = num_heads * seq_len * head_dim;
     params.k_batch_stride = num_heads * seq_len * head_dim;
@@ -154,6 +160,9 @@ int main() {
     params.q_row_stride = head_dim;
     params.k_row_stride = head_dim;
     params.o_row_stride = seq_len;
+    params.ido_batch_stride = num_heads * seq_len * topk;
+    params.ido_head_stride = seq_len * topk;
+    params.ido_row_stride = topk;
     
     // Create CUDA stream
     cudaStream_t stream;

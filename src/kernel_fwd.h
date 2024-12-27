@@ -10,6 +10,7 @@
 #include "kernel_params.h"
 #include "utils.h"
 #include "block_info.h"
+#include "topk.h"
 
 
 #define DEBUG
@@ -74,9 +75,19 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
     // IDO shape: [batch_size, nums_head, seq_len_q, topk]  for topk index output
     // Every Block of IDO is [kBlockM, kTopk]
     const index_t row_offset_ido = ((bidb * params.h + bidh) * params.seqlen_q_rounded + m_block * kBlockM) * params.topk;
-    Tensor gIDO = make_tensor(make_gmem_ptr(reinterpret_cast<index_t*>(params.ido_ptr) + row_offset_ido),
-                            Shape<Int<kBlockM>, Int<kTopk>>{},
-                            make_stride(Int<kTopk>, _1{}));
+//     Tensor gIDO = make_tensor(make_gmem_ptr(reinterpret_cast<index_t*>(params.ido_ptr) + row_offset_ido),
+//                             Shape<Int<kBlockM>, Int<kTopk>>{},
+//                             make_stride(kTopk, _1{}));
+    
+// #ifdef DEBUG
+//     if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+//         printf("\n---------------------------------------------\n");
+//         printf("--- In compute_rowwise_block RESULT gIDO ---\n");
+//         printf("\n---------------------------------------------\n");
+//         print_tensor(gIDO);
+//         printf("\n---------------------------------------------\n");
+//     }
+// #endif
 
 
 
@@ -113,15 +124,25 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
     Tensor global_value = make_tensor(tIrI.data(), flash::convert_layout_acc_rowcol(tIrI.layout()));        // ((2, MMA_M), (2, MMA_N))
     // clear(acc_i);
     Tensor global_index = make_tensor_like<index_t>(global_value);
-    int strideInThr = layout<2>(tSgS);
+    int strideInThr = size<2>(tSgS);  // 8
     int strideAmongThr = 32 >> 4;   // layout<0,0>TiledMMA.Layout_C / Atom_MMA_M
-    flash::TopK<size<0,0>(global_value) * size<1>(global_value), size<0,1>(global_value) * size<2>(global_value), static_cast<int>(sqrt(strideInThr)), static_cast<int>(sqrt(strideAmongThr)), kBlockN, Element, index_t> topk;
+
+    flash::TopK<size<0>(global_value), size<1>(global_value), 3, 1, kBlockN, Element, index_t> topk;
 #ifdef DEBUG
     if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
         printf("\n---------------------------------------------\n");
         printf("--- TOPK PARAMS CHECK ---\n");
         printf("\n---------------------------------------------\n");
         printf("strideBitInThr: %d, strideBitAmongThr: %d\n", static_cast<int>(sqrt(strideInThr)), static_cast<int>(sqrt(strideAmongThr)));
+        printf("\n---------------------------------------------\n");
+        printf("global_index:\n");
+        print_tensor(global_index);
+        printf("\n---------------------------------------------\n");    
+        printf("tIrI:\n");
+        print_tensor(tIrI);
+        printf("\n---------------------------------------------\n");
+        printf("global_value:\n");
+        print_tensor(global_value);
         printf("\n---------------------------------------------\n");
     }
 #endif
@@ -200,7 +221,7 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
         print_tensor(tSgS);
         printf("\n---------------------------------------------\n");
     }
-    if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 2) {
+    if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 20) {
         printf("\n---------------------------------------------\n");
         printf("--- In compute_rowwise_block PROLOGUE THREAD 2 ---\n");
         printf("\n---------------------------------------------\n");
@@ -266,36 +287,36 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
             print_tensor(acc_s);
             printf("\n---------------------------------------------\n");
         }
-// #endif
+#endif
 //         // directly pass value into gmem
 //         cute::copy(acc_s, tSgS);
 //         tSgS.data() = tSgS.data() + kBlockN;
 
 
 #ifdef DEBUG
-        if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
-            printf("\n---------------------------------------------\n");
-            printf("--- In compute_rowwise_block RESULT tSgS THREAD 1 ---\n");
-            printf("\n---------------------------------------------\n");
-            print(tSgS);
-            printf("\n");
-            print_tensor(tSgS);
-            printf("\n");
-            print(tSgS.layout());
-            printf("\n---------------------------------------------\n");
-        }
+        // if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 2) {
+        //     printf("\n---------------------------------------------\n");
+        //     printf("--- In compute_rowwise_block RESULT tSgS THREAD 2 ---\n");
+        //     printf("\n---------------------------------------------\n");
+        //     print(tSgS);
+        //     printf("\n");
+        //     print_tensor(tSgS);
+        //     printf("\n");
+        //     print(tSgS.layout());
+        //     printf("\n---------------------------------------------\n");
+        // }
 
-        if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 1) {
-            printf("\n---------------------------------------------\n");
-            printf("--- In compute_rowwise_block RESULT tSgS THREAD 1 ---\n");
-            printf("\n---------------------------------------------\n");
-            print(tSgS);
-            printf("\n");
-            print_tensor(tSgS);
-            printf("\n");
-            print(tSgS.layout());
-            printf("\n---------------------------------------------\n");
-        }
+        // if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 1) {
+        //     printf("\n---------------------------------------------\n");
+        //     printf("--- In compute_rowwise_block RESULT tSgS THREAD 1 ---\n");
+        //     printf("\n---------------------------------------------\n");
+        //     print(tSgS);
+        //     printf("\n");
+        //     print_tensor(tSgS);
+        //     printf("\n");
+        //     print(tSgS.layout());
+        //     printf("\n---------------------------------------------\n");
+        // }
 #endif
 
 
@@ -312,18 +333,16 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
         }
 
 
-
-        const int offset_blk = step;
         // TOPK
         (step == 0)
-            ? topk.template topk_index<true, offset_blk>(acc_s, global_index, global_value, tidx)
-            : topk.template topk_index<false, offset_blk>(acc_s, global_index, global_value, tidx);
+            ? topk.template topk_index<true, index_t>(acc_s, global_index, global_value, tidx, step )
+            : topk.template topk_index<false, index_t>(acc_s, global_index, global_value, tidx, step);
     }
 
 #ifdef DEBUG
-    if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+    if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 20) {
         printf("\n---------------------------------------------\n");
-        printf("--- In TopK ROW COMPLETE RESULT global_index ---\n");
+        printf("--- In TopK ROW COMPLETE RESULT global_index THREAD 20 ---\n");
         printf("\n---------------------------------------------\n");
         print_tensor(global_index);
         printf("\n---------------------------------------------\n");
@@ -345,59 +364,177 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
     //                                                                                                                                    ^                                                                
 
     // 1. init final tensor
-    Tensor tIgI = make_tensor<index_t>(make_shape(_1, _8));
-    clear(tIgI);
-    if(tidx & 0x11 == 0) {
-        #pragma unroll
-        for(int i = 0; i < 8; i++) {
-            tIgI(0,i) = global_index(0, i);
-        }
-    }
+//     Tensor tIgI = make_tensor<index_t>(make_shape(_1{}, _8{}));
+//     clear(tIgI);
+//     if((tidx & 0x11) == 0) {
+//         #pragma unroll
+//         for(int i = 0; i < 8; i++) {
+//             tIgI(0,i) = global_index(0, i);
+//         }
+//     }
 
-    // 2. warp-shuffle to dispatch values to each thread
-    // T0 --> T1
-    #pragma unroll
-    for(int i = 8; i < 16; i++) {
-        warp_scatter_index(global_index(0, i), 1, 4, 0x88888888);
-    }
-    if(tidx & 0x11 == 1) {
-        #pragma unroll
-        for(int i = 8; i < 16; i++) {
-            tIgI(0,i-8) = global_index(0, i);
-        }
-    }
+//     // 2. warp-shuffle to dispatch values to each thread
+//     // T0 --> T1
+//     #pragma unroll
+//     for(int i = 8; i < 16; i++) {
+//         warp_scatter_index(global_index(0, i), 1, 4, 0x88888888);
+//     }
+//     if((tidx & 0x11) == 1) {
+//         #pragma unroll
+//         for(int i = 8; i < 16; i++) {
+//             tIgI(0,i-8) = global_index(0, i);
+//         }
+//     }
 
-    // T0 --> T2
-    #pragma unroll
-    for(int i = 0; i < 8; i++) {
-        warp_scatter_index(global_index(1, i),  2, 4, 0x88888888);
-    }
-    if(tidx & 0x11 == 2) {
-        #pragma unroll
-        for(int i = 0; i < 8; i++) {
-            tIgI(0,i) = global_index(1, i);
-        }
-    }
+//     // T0 --> T2
+//     #pragma unroll
+//     for(int i = 0; i < 8; i++) {
+//         warp_scatter_index(global_index(1, i),  2, 4, 0x88888888);
+//     }
+//     if((tidx & 0x11) == 2) {
+//         #pragma unroll
+//         for(int i = 0; i < 8; i++) {
+//             tIgI(0,i) = global_index(1, i);
+//         }
+//     }
 
-    // T0 --> T3
-    #pragma unroll
-    for(int i = 8; i < 16; i++) {
-        warp_scatter_index(global_index(1, i), 3, 4, 0x88888888);
-    }
-    if(tidx & 0x11 == 3) {
-        #pragma unroll
-        for(int i = 8; i < 16; i++) {
-            tIgI(0,i-8) = global_index(1, i);
-        }
-    }
+//     // T0 --> T3
+//     #pragma unroll
+//     for(int i = 8; i < 16; i++) {
+//         warp_scatter_index(global_index(1, i), 3, 4, 0x88888888);
+//     }
+//     if((tidx & 0x11) == 3) {
+//         #pragma unroll
+//         for(int i = 8; i < 16; i++) {
+//             tIgI(0,i-8) = global_index(1, i);
+//         }
+//     }
+
+// #ifdef DEBUG
+//     if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+//         printf("\n---------------------------------------------\n");
+//         printf("--- In TopK ROW COMPLETE RESULT tIgI ---\n");
+//         printf("\n---------------------------------------------\n");
+//         print_tensor(tIgI);
+//         printf("\n---------------------------------------------\n");
+//         printf("--- In TopK ROW COMPLETE RESULT global_index ---\n");
+//         printf("\n---------------------------------------------\n");
+//         print_tensor(global_index);
+//         printf("\n---------------------------------------------\n");
+//     }
+// #endif
 
 
     // 2. init Tiled_Copy
-    typename Kernel_traits::GmemTiledCopyIDO gmem_tiled_copy_IDO;
-    auto gmem_thr_copy_IDO = gmem_tiled_copy_IDO.get_thread_slice(tidx);
-    Tensor tIgI_D = gmem_thr_copy_IDO.partition_D(gIDO);
+    // typename Kernel_traits::GmemTiledCopyIDO gmem_tiled_copy_IDO;
+    // auto gmem_thr_copy_IDO = gmem_tiled_copy_IDO.get_thread_slice(tidx);
+    // Tensor tIgI_D = gmem_thr_copy_IDO.partition_D(gIDO);
 
-    cute::copy(gmem_tiled_copy_IDO,tIgI, tIgI_D);
+    // cute::copy(gmem_tiled_copy_IDO,tIgI, tIgI_D);
+
+    const index_t warp_id = (tidx >> (0x5));
+    const index_t lane_id = (tidx & (0x1f));
+
+#ifdef DEBUG
+    if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+        printf("\n---------------------------------------------\n");
+        printf("--- In TopK ROW COMPLETE RESULT global_index ---\n");
+        printf("\n---------------------------------------------\n");
+        print_tensor(global_index);
+        printf("\n---------------------------------------------\n");
+    }
+#endif
+
+
+    #pragma unroll
+    for(int i = 0; i < 16; i++) {
+        warp_scatter_index(global_index(1, i), 2, 4, 0x55555555);
+    }
+
+
+#ifdef DEBUG
+    if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 2) {
+        printf("\n---------------------------------------------\n");
+        printf("--- In TopK ROW COMPLETE RESULT global_index THREAD 2 ---\n");
+        printf("\n---------------------------------------------\n");
+        for(int i = 0; i < size<0>(global_index); i++) {
+            for(int j = 0; j < size<1>(global_index); j++) {
+                printf("global_index(%d, %d): %d\n", i, j, global_index(i, j));
+            }
+        }
+        printf("\n---------------------------------------------\n");
+    }
+#endif
+
+    if ((tidx & 0x1) == 0) {
+        if((tidx & 0x2) == 0) {
+            // Tensor tIgI_S = make_tensor<index_t>(make_shape(_1{}, _16{}));
+            Tensor tIrI_S = local_tile(global_index, Shape<_1, Int<kTopk>>{}, make_coord((0, 0)));  //  make_coord((0, 0))
+            // Tensor tIgI_S = tiled_divide(global_index, Shape<_1, Int<kTopk>>{});
+            // Tensor gIDO = make_tensor(make_gmem_ptr(reinterpret_cast<index_t*>(params.ido_ptr) + row_offset_ido),
+            //                 Shape<Int<kBlockM>, Int<kTopk>>{},
+            //                 make_stride(kTopk, _1{}));
+            Tensor tIgI_D = make_tensor(make_gmem_ptr(reinterpret_cast<index_t*>(params.ido_ptr) + (row_offset_ido + ((warp_id << (0x4)) + (lane_id >> 2)) * params.topk)),
+                            Shape<_1, Int<kTopk>>{},
+                            make_stride(kTopk, _1{}));
+            // Tensor tIgI_D = local_tile(global_index, Shape<_1, Int<kTopk>>{},make_coord(, 0)));  //  make_coord(((warp_id << (0x4)) + (lane_id >> 2), 0))
+#ifdef DEBUG
+            if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+                printf("\n------------------------IN SECTION 1------------------------------\n");
+                printf("\n--------------------THREAD 0 BEFORE COPY-------------------------\n");
+                printf("tIrI_S:\n");
+                print_tensor(tIrI_S);
+                printf("\n---------------------------------------------\n");
+            }
+#endif
+            cute::copy(tIrI_S, tIgI_D);
+#ifdef DEBUG
+            if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+                printf("\n------------------------IN SECTION 1------------------------------\n");
+                printf("\n--------------------THREAD 0 AFTER COPY-------------------------\n");
+                printf("tIrI_S:\n");
+                print_tensor(tIrI_S);
+                printf("tIgI_D:\n");
+                print_tensor(tIgI_D);
+                printf("\n---------------------------------------------\n");
+            }
+#endif
+        } else {
+            // Tensor tIgI_S = local_tile(global_index, Shape<_1, Int<kTopk>>{}, make_coord((1, 0)));
+            Tensor tmpReg = tiled_divide(global_index, Shape<_1, Int<kTopk>>{});
+            Tensor tIrI_S = tmpReg(make_coord(_,_), 1, 0);
+            Tensor tIgI_D = make_tensor(make_gmem_ptr(reinterpret_cast<index_t*>(params.ido_ptr) + (row_offset_ido + ((warp_id << 0x4) + ((lane_id - 2) >> 2) + 8) * params.topk)),   // 
+                            Shape<_1, Int<kTopk>>{},
+                            make_stride(kTopk, _1{}));
+#ifdef DEBUG
+            if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 2) {
+                printf("\n------------------------IN SECTION 2------------------------------\n");
+                printf("\n--------------------THREAD 2 BEFORE COPY-------------------------\n");
+                printf("tIrI_S:\n");
+                print_tensor(tIrI_S);
+                printf("tmpReg:\n");
+                print_tensor(tmpReg);
+                printf("\n---------------------------------------------\n");
+            }
+#endif
+            // Tensor tIgI_D = local_tile(global_index, Shape<_1, Int<kTopk>>{}, make_coord(((warp_id << (0x4)) + (((lane_id - 2) >> 2)) + 8, 0)));
+            cute::copy(tIrI_S, tIgI_D);
+#ifdef DEBUG
+            if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 2) {
+                printf("\n------------------------IN SECTION 2------------------------------\n");
+                printf("\n--------------------THREAD 2 AFTER COPY-------------------------\n");
+                printf("tIrI_S:\n");
+                print_tensor(tIrI_S);
+                printf("tIgI_D:\n");
+                print_tensor(tIgI_D);
+                printf("global_index:\n");
+                print_tensor(global_index);
+                printf("\n---------------------------------------------\n");
+            }
+#endif
+        }
+
+    }
 
 }
 

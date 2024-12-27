@@ -111,7 +111,7 @@ int main() {
     cutlass::half_t *h_q = new cutlass::half_t[qk_size];
     cutlass::half_t *h_k = new cutlass::half_t[qk_size];
     cutlass::half_t *h_o = new cutlass::half_t[o_size];
-    uint32_t *h_ido = new uint32_t[topk_size];
+    uint16_t *h_ido = new uint16_t[topk_size];
     
     // Initialize input tensors
     initialize_tensor(h_q, qk_size);
@@ -122,11 +122,11 @@ int main() {
 
     // Allocate device memory
     cutlass::half_t *d_q, *d_k, *d_o;
-    uint32_t *d_ido;
+    uint16_t *d_ido;
     CHECK_CUDA(cudaMalloc(&d_q, qk_size * sizeof(cutlass::half_t)));
     CHECK_CUDA(cudaMalloc(&d_k, qk_size * sizeof(cutlass::half_t)));
     CHECK_CUDA(cudaMalloc(&d_o, o_size * sizeof(cutlass::half_t)));
-    CHECK_CUDA(cudaMalloc(&d_ido, topk_size * sizeof(uint32_t)));
+    CHECK_CUDA(cudaMalloc(&d_ido, topk_size * sizeof(uint16_t)));
     
     // Copy data to device
     CHECK_CUDA(cudaMemcpy(d_q, h_q, qk_size * sizeof(cutlass::half_t), cudaMemcpyHostToDevice));
@@ -176,6 +176,7 @@ int main() {
     
     // Copy results back to host
     CHECK_CUDA(cudaMemcpy(h_o, d_o, o_size * sizeof(cutlass::half_t), cudaMemcpyDeviceToHost));
+    CHECK_CUDA(cudaMemcpy(h_ido, d_ido, topk_size * sizeof(uint16_t), cudaMemcpyDeviceToHost));
     
     // Print first few elements of output
     // std::cout << "\nInput Q tensor (first 10 elements):" << std::endl;
@@ -186,11 +187,32 @@ int main() {
     // for (int i = 0; i < 10; i++) {
     //     std::cout << static_cast<float>(h_k[i]) << " ";
     // }
-    std::cout << "\n\nOutput O tensor (first 10 elements):" << std::endl;
-    for (int i = 0; i < 10; i++) {
-        std::cout << static_cast<float>(h_o[i]) << " ";
+    // std::cout << "\n\nOutput O tensor (first 10 elements):" << std::endl;
+    // for (int i = 0; i < 10; i++) {
+    //     std::cout << static_cast<float>(h_o[i]) << " ";
+    // }
+    // std::cout << std::endl;
+
+    std::cout << "\n\nOutput IDO tensor:" << std::endl;
+    for (int b = 0; b < batch_size; b++) {
+        std::cout << "Batch " << b << ":\n";
+        for (int h = 0; h < num_heads; h++) {
+            std::cout << "  Head " << h << ":\n";
+            for (int s = 0; s < seq_len; s++) {
+                std::cout << "    Seq " << s << ": ";
+                for (int t = 0; t < topk; t++) {
+                    size_t idx = b * params.ido_batch_stride + 
+                                h * params.ido_head_stride +
+                                s * params.ido_row_stride + t;
+                    std::cout << h_ido[idx] << " ";
+                }
+                std::cout << std::endl;
+            }
+            std::cout << std::endl;
+        }
     }
     std::cout << std::endl;
+
 
     // Compute CPU reference implementation
     std::vector<float> cpu_output(o_size);
@@ -201,17 +223,17 @@ int main() {
     float max_diff = compare_results(h_o, cpu_output.data(), o_size);
     
     // Print comparison results
-    std::cout << "\nCPU QK Output (first 10 elements):" << std::endl;
-    for (int i = 0; i < 10; i++) {
-        std::cout << cpu_output[i] << " ";
-    }
-    std::cout << "\n\nMaximum difference between CPU and GPU results: " << max_diff << std::endl;
+    // std::cout << "\nCPU QK Output (first 10 elements):" << std::endl;
+    // for (int i = 0; i < 10; i++) {
+    //     std::cout << cpu_output[i] << " ";
+    // }
+    // std::cout << "\n\nMaximum difference between CPU and GPU results: " << max_diff << std::endl;
     
-    if (max_diff > 1e-3f) {
-        std::cout << "WARNING: Results differ significantly!" << std::endl;
-    } else {
-        std::cout << "Results match within tolerance." << std::endl;
-    }
+    // if (max_diff > 1e-3f) {
+    //     std::cout << "WARNING: Results differ significantly!" << std::endl;
+    // } else {
+    //     std::cout << "Results match within tolerance." << std::endl;
+    // }
     
     // Cleanup
     delete[] h_q;

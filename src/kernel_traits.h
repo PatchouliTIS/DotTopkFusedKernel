@@ -159,10 +159,10 @@ struct Flash_fwd_kernel_traits : public Base {
 
     // TiledCopy for IDO
     static constexpr int kIDOThreadsPerRow = topK / kGmemElemsPerLoad; // 2
-    using GmemLayoutAtomIDO = Layout<Shape < Shape <Int<kNThreads / kIDOThreadsPerRow / 8, _8>>, Int<kIDOThreadsPerRow>>,
-                                  Stride< Stride <Int<kIDOThreadsPerRow / 2>, _2>, _1>>; // thr layout:((64, 2) : (2, 1))  --> gmem IDO layout: ((64, 16) : (16, 1))  Each thread load 8 elements, and each row has 2 threads.   
+    using GmemLayoutAtomIDO = Layout<Shape<_64, _2>,  // Thread layout: 8 rows x 16 cols
+                                   Stride<_2, _1>>;   // Row-major layout with stride 16
     using GmemTiledCopyIDO = decltype(
         make_tiled_copy(Copy_Atom<AutoVectorizingCopyWithAssumedAlignment<128>, index_t>{},
                         GmemLayoutAtomIDO{},
-                        Layout<Shape < _1, _8>>{}));  // Val layout, 8 vals per load    
+                        Layout<Shape<_1, _8>>{}));  // Val layout, 8 vals per load    
 };

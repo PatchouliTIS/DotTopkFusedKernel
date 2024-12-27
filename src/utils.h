@@ -11,7 +11,7 @@
 #endif
 
 #include <cute/tensor.hpp>
-
+#include <cmath>
 #include <cutlass/array.h>
 #include <cutlass/cutlass.h>
 #include <cutlass/numeric_conversion.h>
@@ -93,7 +93,16 @@ __forceinline__ __device__ void copy(TiledCopy tiled_copy, Tensor<Engine0, Layou
 
 // Thr_tile Bitonic Sort
 template<typename IDX>
-__forceinline__ __device__  void warp_scatter_index(IDX &idx, const int &offset, const int &stride, const unsigned int &mask = 0xffffffff) {
+__forceinline__ __device__  void warp_scatter_index(IDX &idx, const int &offset, const int &stride, unsigned int mask = 0xffffffff) {
+#ifdef DEBUG
+    if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 2) {
+        printf("\n---------------------------------------------\n");
+        printf("--- In warp_scatter_index THREAD 2---\n");
+        printf("\n---------------------------------------------\n");
+        printf("idx: %d, offset: %d, stride: %d, mask: %x\n", idx, offset, stride, mask);
+        printf("\n---------------------------------------------\n");
+    }
+#endif
     idx = __shfl_up_sync(mask, idx, offset, stride);
     return;
 }
@@ -299,6 +308,19 @@ __forceinline__ __device__ auto convert_layout_acc_rowcol(Layout acc_layout) {
     static_assert(decltype(rank(acc_layout))::value == 3);
     auto l = logical_divide(acc_layout, Shape<_2>{});  // ((2, 2), MMA_M, MMA_N)
     return make_layout(make_layout(get<0, 0>(l), get<1>(l)), make_layout(get<0, 1>(l), get<2>(l)));         // TODO: ((2, MMA_M), (2, MMA_N))  
+};
+
+
+
+template<typename T>
+struct MaxOp {
+__device__ __forceinline__ T operator()(T const & x, T const & y) { return x > y ? x : y; }
+};
+
+template <>
+struct MaxOp<float> {
+// This is slightly faster
+__device__ __forceinline__ float operator()(float const &x, float const &y) { return max(x, y); }
 };
 
 } // End of namespace flash

@@ -7,9 +7,18 @@
 
 // Helper function to initialize tensor data with sequential numbers
 template<typename T>
-void initialize_tensor(T* data, size_t size) {
+void initialize_tensor_float(T* data, size_t size) {
+    // static std::random_device rd;
+    // static std::mt19937 gen(rd());
+
+    // // Create normal distribution with mean 0 and standard deviation 0.3333
+    // // Using 0.3333 as std dev means ~99.7% of values will fall within ±1.0
+    // static std::normal_distribution<float> distribution(0.0f, 0.3333f);
+    // // Generate and clamp the value between -1.0 and 1.0
+    // float value = distribution(gen);
+    // value = std::clamp(value, -1.0f, 1.0f);
     for (size_t i = 0; i < size; i++) {
-        data[i] = static_cast<T>((unsigned int)i);  // Fill with 1, 2, 3, 4, ...
+        data[i] = static_cast<T>((float)i);
     }
 }
 
@@ -35,10 +44,12 @@ void compute_qk_cpu(
     const cutlass::half_t* q,  // [batch_size, num_heads, seq_len, head_dim]
     const cutlass::half_t* k,  // [batch_size, num_heads, seq_len, head_dim]
     float* output,             // [batch_size, num_heads, seq_len, seq_len]
+    uint16_t* indices,         // [batch_size, num_heads, seq_len, topk]
     int batch_size,
     int num_heads,
     int seq_len,
-    int head_dim
+    int head_dim,
+    int topk
 ) {
     // Loop over batches and heads
     for (int b = 0; b < batch_size; b++) {
@@ -49,13 +60,16 @@ void compute_qk_cpu(
             size_t q_head_offset = h * (seq_len * head_dim);
             size_t k_head_offset = h * (seq_len * head_dim);
             size_t o_offset = b * (num_heads * seq_len * seq_len) + h * (seq_len * seq_len);
+            size_t idx_offset = b * (num_heads * seq_len * topk) + h * (seq_len * topk);
 
             // Compute Q * K^T for this batch and head
             for (int i = 0; i < seq_len; i++) {
+                // Store dot products and indices for sorting
+                std::vector<std::pair<float, uint16_t>> row_values;
+                
                 for (int j = 0; j < seq_len; j++) {
                     float sum = 0.0f;
                     for (int d = 0; d < head_dim; d++) {
-                        // Calculate indices for Q and K
                         size_t q_idx = q_batch_offset + q_head_offset + i * head_dim + d;
                         size_t k_idx = k_batch_offset + k_head_offset + j * head_dim + d;
                         
@@ -63,8 +77,17 @@ void compute_qk_cpu(
                         float k_val = static_cast<float>(k[k_idx]);
                         sum += q_val * k_val;
                     }
-                    // Just store the dot product without scaling
                     output[o_offset + i * seq_len + j] = sum;
+                    row_values.push_back({sum, static_cast<uint16_t>(j)});
+                }
+
+                // Sort row values in descending order
+                std::sort(row_values.begin(), row_values.end(),
+                    [](const auto& a, const auto& b) { return a.first > b.first; });
+
+                // Store top-k indices
+                for (int t = 0; t < topk; t++) {
+                    indices[idx_offset + i * topk + t] = row_values[t].second;
                 }
             }
         }
@@ -98,7 +121,7 @@ int main() {
     // Define problem dimensions
     const int batch_size = 1;
     const int num_heads = 1;
-    const int seq_len = 64;
+    const int seq_len = 128;
     const int head_dim = 128;
     const int topk = 16;
     
@@ -114,10 +137,11 @@ int main() {
     uint16_t *h_ido = new uint16_t[topk_size];
     
     // Initialize input tensors
-    initialize_tensor(h_q, qk_size);
-    initialize_tensor(h_k, qk_size);
+    initialize_tensor_float(h_q, qk_size);
+    initialize_tensor_float(h_k, qk_size);
     // zero_initialize_tensor(h_o, o_size);
-    initialize_tensor(h_o, o_size);
+    // initialize_tensor_float(h_o, o_size);
+    zero_initialize_tensor(h_o, o_size);
     zero_initialize_tensor(h_ido, topk_size);
 
     // Allocate device memory
@@ -216,24 +240,36 @@ int main() {
 
     // Compute CPU reference implementation
     std::vector<float> cpu_output(o_size);
-    compute_qk_cpu(h_q, h_k, cpu_output.data(), 
-                  batch_size, num_heads, seq_len, head_dim);
+    std::vector<uint16_t> cpu_indices(topk_size);
+    compute_qk_cpu(h_q, h_k, cpu_output.data(), cpu_indices.data(),
+                  batch_size, num_heads, seq_len, head_dim, topk);
     
-    // Compare results
+    // Compare QK results
     float max_diff = compare_results(h_o, cpu_output.data(), o_size);
     
-    // Print comparison results
-    // std::cout << "\nCPU QK Output (first 10 elements):" << std::endl;
-    // for (int i = 0; i < 10; i++) {
-    //     std::cout << cpu_output[i] << " ";
-    // }
-    // std::cout << "\n\nMaximum difference between CPU and GPU results: " << max_diff << std::endl;
-    
-    // if (max_diff > 1e-3f) {
-    //     std::cout << "WARNING: Results differ significantly!" << std::endl;
-    // } else {
-    //     std::cout << "Results match within tolerance." << std::endl;
-    // }
+    // Compare indices
+    std::cout << "\nComparing indices between CPU and GPU:\n";
+    std::cout << "CPU indices:\n";
+    for (int b = 0; b < batch_size; b++) {
+        std::cout << "Batch " << b << ":\n";
+        for (int h = 0; h < num_heads; h++) {
+            std::cout << "  Head " << h << ":\n";
+            for (int s = 0; s < seq_len; s++) {
+                std::cout << "    Seq " << s << ": ";
+                for (int t = 0; t < topk; t++) {
+                    size_t idx = b * params.ido_batch_stride + 
+                                h * params.ido_head_stride +
+                                s * params.ido_row_stride + t;
+                    std::cout << cpu_indices[idx] << " ";
+                }
+                std::cout << std::endl;
+            }
+            std::cout << std::endl;
+        }
+    }
+
+
+
     
     // Cleanup
     delete[] h_q;

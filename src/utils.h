@@ -307,7 +307,8 @@ __forceinline__ __device__ auto convert_layout_acc_rowcol(Layout acc_layout) {
     static_assert(decltype(size<0>(acc_layout))::value == 4);
     static_assert(decltype(rank(acc_layout))::value == 3);
     auto l = logical_divide(acc_layout, Shape<_2>{});  // ((2, 2), MMA_M, MMA_N)
-    return make_layout(make_layout(get<0, 0>(l), get<1>(l)), make_layout(get<0, 1>(l), get<2>(l)));         // TODO: ((2, MMA_M), (2, MMA_N))  
+    // Important: the order of the get<>(layout) CANNOT be changed!!!
+    return make_layout(make_layout(get<0, 1>(l), get<1>(l)), make_layout(get<0, 0>(l), get<2>(l)));         // TODO: ((2, MMA_M), (2, MMA_N))  
 };
 
 

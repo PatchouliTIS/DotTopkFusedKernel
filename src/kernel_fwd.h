@@ -68,9 +68,9 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
 
     // TODO: remove gO from kernel, no need to store it in gmem
     // O shape: [batch_size, nums_head, seq_len_q, seq_len_k]
-    Tensor gO = make_tensor(make_gmem_ptr(reinterpret_cast<Element*>(params.o_ptr) + row_offset_p),
-                            Shape<Int<kBlockM>, Int<kBlockN>>{},
-                            make_stride(params.seqlen_k_rounded, _1{}));
+    // Tensor gO = make_tensor(make_gmem_ptr(reinterpret_cast<Element*>(params.o_ptr) + row_offset_p),
+    //                         Shape<Int<kBlockM>, Int<kBlockN>>{},
+    //                         make_stride(params.seqlen_k_rounded, _1{}));
 
     // IDO shape: [batch_size, nums_head, seq_len_q, topk]  for topk index output
     // Every Block of IDO is [kBlockM, kTopk]
@@ -114,7 +114,7 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
     Tensor tSrQ = thr_mma.partition_fragment_A(sQ);
     Tensor tSrK = thr_mma.partition_fragment_B(sK);
 
-    Tensor tSgS  = thr_mma.partition_C(gO);
+    // Tensor tSgS  = thr_mma.partition_C(gO);
     // clear(tSrQ);
     // clear(tSrK);
 
@@ -124,8 +124,8 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
     Tensor global_value = make_tensor(tIrI.data(), flash::convert_layout_acc_rowcol(tIrI.layout()));        // ((2, MMA_M), (2, MMA_N))
     // clear(acc_i);
     Tensor global_index = make_tensor_like<index_t>(global_value);
-    int strideInThr = size<2>(tSgS);  // 8
-    int strideAmongThr = 32 >> 4;   // layout<0,0>TiledMMA.Layout_C / Atom_MMA_M
+    // int strideInThr = size<2>(tSgS);  // 8 According to TiledMMA.Layout_C
+    // int strideAmongThr = 32 >> 4;   // layout<0,0>TiledMMA.Layout_C / Atom_MMA_M
 
     flash::TopK<size<0>(global_value), size<1>(global_value), 3, 1, kBlockN, Element, index_t> topk;
 #ifdef DEBUG
@@ -133,7 +133,7 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
         printf("\n---------------------------------------------\n");
         printf("--- TOPK PARAMS CHECK ---\n");
         printf("\n---------------------------------------------\n");
-        printf("strideBitInThr: %d, strideBitAmongThr: %d\n", static_cast<int>(sqrt(strideInThr)), static_cast<int>(sqrt(strideAmongThr)));
+        printf("strideBitInThr: %d, strideBitAmongThr: %d\n", 3, 1);
         printf("\n---------------------------------------------\n");
         printf("global_index:\n");
         print_tensor(global_index);
@@ -208,25 +208,25 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
         printf("\ntSsQ: \n");
         print(tSsQ);
         printf("\ngO:\n");
-        print_tensor(gO);
-        printf("\ntSgS: \n");
-        print_tensor(tSgS);
+        // print_tensor(gO);
+        // printf("\ntSgS: \n");
+        // print_tensor(tSgS);
         printf("\n---------------------------------------------\n");
     }
     if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 1) {
         printf("\n---------------------------------------------\n");
         printf("--- In compute_rowwise_block PROLOGUE THREAD 1---\n");
         printf("\n---------------------------------------------\n");
-         printf("tSgS: \n");
-        print_tensor(tSgS);
+        // printf("tSgS: \n");
+        // print_tensor(tSgS);
         printf("\n---------------------------------------------\n");
     }
     if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 20) {
         printf("\n---------------------------------------------\n");
         printf("--- In compute_rowwise_block PROLOGUE THREAD 2 ---\n");
         printf("\n---------------------------------------------\n");
-         printf("tSgS: \n");
-        print_tensor(tSgS);
+        // printf("tSgS: \n");
+        // print_tensor(tSgS);
         printf("\n---------------------------------------------\n");
     }
 #endif

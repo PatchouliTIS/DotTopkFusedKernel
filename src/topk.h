@@ -17,7 +17,7 @@
 // #define MAX_VALUE(a, b) ((a) > (b) ? (a) : (b))
 
 // float equal
-#define IS_FLOAT_EQUAL(a, b) ((a) - (b) < 0 ? (b) - (a) <= FLOAT_EPSILON : (a) - (b) <= FLOAT_EPSILON)
+// #define IS_FLOAT_EQUAL(a, b) ((a) - (b) < 0 ? (b) - (a) <= FLOAT_EPSILON : (a) - (b) <= FLOAT_EPSILON)
 
 #define ORDERV(x,idx,row,a,b) { bool swap = reverse ^ (x(row,a)<x(row,b)); \
       float auxa = x(row,a); \
@@ -52,7 +52,7 @@ public:
         float max_val = Op(val, other_val);
         IDX other_idx = __shfl_down_sync(mask, idx, 1, 2);
 
-        if(!IS_FLOAT_EQUAL(max_val, val)) {
+        if(max_val > val) {
             val = max_val;
             idx = other_idx;
         }
@@ -66,7 +66,7 @@ public:
         IDX other_idx = __shfl_down_sync(mask, idx, 2, 4);
 
         if ((lane_id & 0x3) == 0) {
-            if(!IS_FLOAT_EQUAL(max_val, val)) {
+            if(max_val > val) {
                 val = max_val;
                 idx = other_idx;
             }
@@ -122,6 +122,16 @@ public:
             print_tensor(scores);
             printf("\n---------------------------------------------\n");
         }
+
+        if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 3) {
+            printf("\n---------------------------------------------\n");
+            printf("--- In TopK STEP 0 RESULT cur_idx THREAD 3---\n");
+            printf("\n---------------------------------------------\n");
+            print_tensor(cur_idx);
+            printf("\n ---- scores ----\n");
+            print_tensor(scores);
+            printf("\n---------------------------------------------\n");
+        }
 #endif
         
 
@@ -136,18 +146,54 @@ public:
                 reverse = ((i >> 1) + 1)&1;
                 B2V(scores, cur_idx, row, i);
             }
+#ifdef DEBUG
+        if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 2) {
+            printf("\n---------------------------------------------\n");
+            printf("--- In TopK Step 1 B2V RESULT cur_idx THREAD 2---\n");
+            printf("\n---------------------------------------------\n");
+            printf("scores: \n");
+            print_tensor(scores);
+            printf("cur_idx: \n");
+            print_tensor(cur_idx);
+            printf("\n---------------------------------------------\n");
+        }
+#endif
             // 4-stride bitonic sort
             #pragma unroll
             for (int i=0; i< kNCols; i+=4) {
                 reverse = ((i >> 2) + 1)&1;
                 B4V(scores, cur_idx, row, i);
             }
+#ifdef DEBUG
+        if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 2) {
+            printf("\n---------------------------------------------\n");
+            printf("--- In TopK Step 1 B4V RESULT cur_idx THREAD 2---\n");
+            printf("\n---------------------------------------------\n");
+            printf("scores: \n");
+            print_tensor(scores);
+            printf("cur_idx: \n");
+            print_tensor(cur_idx);
+            printf("\n---------------------------------------------\n");
+        }
+#endif
             // 8-stride bitonic sort
             #pragma unroll
             for (int i=0; i< kNCols; i+=8) {
                 reverse = ((i >> 3) + 1)&1;
                 B8V(scores, cur_idx, row, i);
             }
+#ifdef DEBUG
+        if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 2) {
+            printf("\n---------------------------------------------\n");
+            printf("--- In TopK Step 1 B8V RESULT cur_idx THREAD 2---\n");
+            printf("\n---------------------------------------------\n");
+            printf("scores: \n");
+            print_tensor(scores);
+            printf("cur_idx: \n");
+            print_tensor(cur_idx);
+            printf("\n---------------------------------------------\n");
+        }
+#endif
             // final 16 elements bitonic sort, reverse according to current  thread id
             reverse = (tid + 1) & 0x1;
             B16V(scores, cur_idx, row, 0);
@@ -156,7 +202,15 @@ public:
 #ifdef DEBUG
         if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 2) {
             printf("\n---------------------------------------------\n");
-            printf("--- In TopK STEP 1 RESULT cur_idx ---\n");
+            printf("--- In TopK STEP 1 RESULT cur_idx THREAD 2---\n");
+            printf("\n---------------------------------------------\n");
+            print_tensor(cur_idx);
+            printf("\n---------------------------------------------\n");
+        }
+
+        if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 3) {
+            printf("\n---------------------------------------------\n");
+            printf("--- In TopK STEP 1 RESULT cur_idx THREAD 3---\n");
             printf("\n---------------------------------------------\n");
             print_tensor(cur_idx);
             printf("\n---------------------------------------------\n");
@@ -176,7 +230,15 @@ public:
 #ifdef DEBUG
         if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 2) {
             printf("\n---------------------------------------------\n");
-            printf("--- In TopK STEP 2 RESULT cur_idx ---\n");
+            printf("--- In TopK STEP 2 RESULT cur_idx THREAD 2---\n");
+            printf("\n---------------------------------------------\n");
+            print_tensor(cur_idx);
+            printf("\n---------------------------------------------\n");
+        }
+
+        if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 3) {
+            printf("\n---------------------------------------------\n");
+            printf("--- In TopK STEP 2 RESULT cur_idx THREAD 3---\n");
             printf("\n---------------------------------------------\n");
             print_tensor(cur_idx);
             printf("\n---------------------------------------------\n");
@@ -213,7 +275,7 @@ public:
 #ifdef DEBUG
         if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 2) {
             printf("\n---------------------------------------------\n");
-            printf("--- In TopK STEP 3 RESULT cur_idx ---\n");
+            printf("--- In TopK STEP 3 RESULT cur_idx THREAD 2---\n");
             printf("\n---------------------------------------------\n");
             print_tensor(cur_idx);
             printf("\n---------------------------------------------\n");
@@ -315,7 +377,7 @@ public:
                 for(int row = 0; row < kNRows; row++) {
                     #pragma unroll
                     for(int col = 0; col < kNCols; col++) {
-                        if (!IS_FLOAT_EQUAL(max_op(global_value(row, col), scores(row, col)), global_value(row, col))) {
+                        if (max_op(global_value(row, col), scores(row, col)) > global_value(row, col)) {
                             global_index(row, col) = cur_idx(row, col);
                             global_value(row, col) = scores(row, col);
                         }

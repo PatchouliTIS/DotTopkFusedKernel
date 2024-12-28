@@ -17,9 +17,7 @@
 #include <cutlass/numeric_conversion.h>
 #include <cutlass/numeric_types.h>
 
-#define DEBUG
-
-
+// #define DEBUG
 
 namespace flash {
 template <bool Is_even_MN=true, bool Is_even_K=true, bool Clear_OOB_MN=false, bool Clear_OOB_K=true,

@@ -61,13 +61,17 @@ template<typename Kernel_traits>
 void run_fused_mtkernel(Flash_fwd_params &params, cudaStream_t stream) {
     constexpr size_t smem_size = Kernel_traits::kSmemSize;
 
-    // printARCH<<<1, 1>>>();
-    
     const bool Is_even_MN =  params.seqlen_k % Kernel_traits::kBlockN == 0 && params.seqlen_q % Kernel_traits::kBlockM == 0;
     const bool Is_even_K = params.d == Kernel_traits::kHeadDim;
 
     const int num_m_block = (params.seqlen_q + Kernel_traits::kBlockM - 1) / Kernel_traits::kBlockM;
     dim3 grid(num_m_block, params.b, params.h);
+
+    // collect the running time of the kernel
+    cudaEvent_t start, stop;
+    CHECK_CUDA(cudaEventCreate(&start));
+    CHECK_CUDA(cudaEventCreate(&stop));
+    CHECK_CUDA(cudaEventRecord(start, stream));
 
     BOOL_SWITCH(Is_even_MN, Is_even_MNConst, [&] {
         BOOL_SWITCH(Is_even_K, Is_even_KConst, [&] {
@@ -76,6 +80,22 @@ void run_fused_mtkernel(Flash_fwd_params &params, cudaStream_t stream) {
             // C10_CUDA_KERNEL_LAUNCH_CHECK();
         });
     });
+
+    // Record stop time
+    CHECK_CUDA(cudaEventRecord(stop, stream));
+    CHECK_CUDA(cudaEventSynchronize(stop));
+
+    float gpu_milliseconds = 0;
+    CHECK_CUDA(cudaEventElapsedTime(&gpu_milliseconds, start, stop));
+
+    // Wait for completion
+    CHECK_CUDA(cudaStreamSynchronize(stream));
+
+    // Add cleanup for timing events
+    CHECK_CUDA(cudaEventDestroy(start));
+    CHECK_CUDA(cudaEventDestroy(stop));
+
+    printf("GPU time: %f ms\n", gpu_milliseconds);
 }
 
 

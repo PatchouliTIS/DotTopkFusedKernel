@@ -13,7 +13,7 @@
 #include "topk.h"
 
 
-#define DEBUG
+// #define DEBUG
 
 
 namespace flash {
@@ -68,9 +68,9 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
 
     // TODO: remove gO from kernel, no need to store it in gmem
     // O shape: [batch_size, nums_head, seq_len_q, seq_len_k]
-    // Tensor gO = make_tensor(make_gmem_ptr(reinterpret_cast<Element*>(params.o_ptr) + row_offset_p),
-    //                         Shape<Int<kBlockM>, Int<kBlockN>>{},
-    //                         make_stride(params.seqlen_k_rounded, _1{}));
+    Tensor gO = make_tensor(make_gmem_ptr(reinterpret_cast<Element*>(params.o_ptr) + row_offset_p),
+                            Shape<Int<kBlockM>, Int<kBlockN>>{},
+                            make_stride(params.seqlen_k_rounded, _1{}));
 
     // IDO shape: [batch_size, nums_head, seq_len_q, topk]  for topk index output
     // Every Block of IDO is [kBlockM, kTopk]
@@ -114,7 +114,7 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
     Tensor tSrQ = thr_mma.partition_fragment_A(sQ);
     Tensor tSrK = thr_mma.partition_fragment_B(sK);
 
-    // Tensor tSgS  = thr_mma.partition_C(gO);
+    Tensor tSgS  = thr_mma.partition_C(gO);
     // clear(tSrQ);
     // clear(tSrK);
 
@@ -289,8 +289,8 @@ inline __device__ void compute_rowwise_block(const Params &params, const int bid
         }
 #endif
 //         // directly pass value into gmem
-//         cute::copy(acc_s, tSgS);
-//         tSgS.data() = tSgS.data() + kBlockN;
+        cute::copy(acc_s, tSgS);
+        tSgS.data() = tSgS.data() + kBlockN;
 
 
 #ifdef DEBUG

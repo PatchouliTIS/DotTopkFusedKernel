@@ -6,6 +6,9 @@ set(CMAKE_CUDA_ARCHITECTURES 80)
 set(CMAKE_CXX_STANDARD 17)          # 指定 C++17
 set(CMAKE_CXX_STANDARD_REQUIRED ON) # 必须使用指定版本
 
+set(CMAKE_PREFIX_PATH /usr/include/libtorch)
+find_package(Torch REQUIRED)
+
 # Find Python with all required components
 # find_package(Python COMPONENTS Interpreter Development REQUIRED)
 # find_package(Torch REQUIRED NO_MODULE PATHS /usr/include/libtorch NO_DEFAULT_PATH)
@@ -40,7 +43,7 @@ target_include_directories(test_flash_attn PRIVATE
     # ${Python_INCLUDE_DIRS}
 )
 
-# target_link_libraries(test_flash_attn ${TORCH_LIBRARIES} Python::Python)
+target_link_libraries(test_flash_attn PRIVATE ${TORCH_LIBRARIES})
 
 # Set compiler flags
 target_compile_options(test_flash_attn PRIVATE

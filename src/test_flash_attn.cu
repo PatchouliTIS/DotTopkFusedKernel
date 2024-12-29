@@ -7,7 +7,7 @@
 #include <vector>
 #include <chrono>
 
-
+// #define DEBUG
 
 // Modify the comparison function
 float compare_results(const cutlass::half_t* gpu_output, const float* cpu_output, 
@@ -211,7 +211,8 @@ int main() {
     // Copy results back to host
     CHECK_CUDA(cudaMemcpy(h_o, d_o, o_size * sizeof(cutlass::half_t), cudaMemcpyDeviceToHost));
     CHECK_CUDA(cudaMemcpy(h_ido, d_ido, topk_size * sizeof(uint16_t), cudaMemcpyDeviceToHost));
-    
+
+#ifdef DEBUG
     std::cout << "\n\nOutput IDO tensor:" << std::endl;
     for (int b = 0; b < batch_size; b++) {
         std::cout << "Batch " << b << ":\n";
@@ -231,7 +232,7 @@ int main() {
         }
     }
     std::cout << std::endl;
-
+#endif
 
     // Compute CPU reference implementation
     std::vector<float> cpu_output(o_size);
@@ -240,7 +241,7 @@ int main() {
     
     compute_qk_cpu(h_q, h_k, cpu_output.data(), cpu_indices.data(),
                   batch_size, num_heads, seq_len, head_dim, topk);
-    
+#ifdef DEBUG
     auto cpu_end = std::chrono::high_resolution_clock::now();
     auto cpu_duration = std::chrono::duration_cast<std::chrono::milliseconds>(cpu_end - cpu_start);
     
@@ -248,10 +249,13 @@ int main() {
     std::cout << "\nPerformance Results:" << std::endl;
     std::cout << "CPU Execution time: " << cpu_duration.count() << " ms" << std::endl;
     // std::cout << "Speedup: " << static_cast<float>(cpu_duration.count()) / gpu_milliseconds << "x" << std::endl;
-    
+#endif
+#ifdef DEBUG
     // Compare QK results
     float max_diff = compare_results(h_o, cpu_output.data(), o_size);
-    
+#endif
+
+#ifdef DEBUG
     // Compare indices
     std::cout << "\nComparing indices between CPU and GPU:\n";
     std::cout << "CPU indices:\n";
@@ -272,7 +276,7 @@ int main() {
             std::cout << std::endl;
         }
     }
-    
+#endif
     // Cleanup
     delete[] h_q;
     delete[] h_k;

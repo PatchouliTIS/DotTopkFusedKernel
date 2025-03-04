@@ -13,7 +13,7 @@
 #include "topk.h"
 
 
-// #define DEBUG
+#define DEBUG
 
 
 namespace flash {

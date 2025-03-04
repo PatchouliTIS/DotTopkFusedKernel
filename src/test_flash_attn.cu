@@ -10,7 +10,7 @@
 
 
 // Modify the comparison function
-float compare_results(const cutlass::half_t* gpu_output, const float* cpu_output, 
+int compare_results(const cutlass::half_t* gpu_output, const float* cpu_output, 
                      size_t size, float tolerance = 1e-3f) {
     float max_diff = 0.0f;
     int diff_count = 0;
@@ -29,7 +29,7 @@ float compare_results(const cutlass::half_t* gpu_output, const float* cpu_output
               << " out of " << size << " elements (" 
               << (100.0f * diff_count / size) << "%)" << std::endl;
     
-    return max_diff;
+    return diff_count;
 }
 // Helper function to initialize tensor data with sequential numbers
 template<typename T>
@@ -130,7 +130,7 @@ int main() {
     // Define problem dimensions
     const int batch_size = 1;
     const int num_heads = 1;
-    const int seq_len = 256;
+    const int seq_len = 64;
     const int head_dim = 128;
     const int topk = 16;
     
@@ -250,8 +250,8 @@ int main() {
     // std::cout << "Speedup: " << static_cast<float>(cpu_duration.count()) / gpu_milliseconds << "x" << std::endl;
     
     // Compare QK results
-    float max_diff = compare_results(h_o, cpu_output.data(), o_size);
-    
+    int max_diff = compare_results(h_o, cpu_output.data(), o_size);
+    std::cout << "Max difference: " << max_diff << std::endl;
     // Compare indices
     std::cout << "\nComparing indices between CPU and GPU:\n";
     std::cout << "CPU indices:\n";
@@ -272,7 +272,49 @@ int main() {
             std::cout << std::endl;
         }
     }
+
+    // Output GPU results
+    std::cout << "\nGPU results:\n";
+    std::cout << "GPU indices:\n";
+    for (int b = 0; b < batch_size; b++) {
+        std::cout << "Batch " << b << ":\n";
+        for (int h = 0; h < num_heads; h++) {
+            std::cout << "  Head " << h << ":\n";
+            for (int s = 0; s < seq_len; s++) {
+                std::cout << "    Seq " << s << ": ";
+                for (int t = 0; t < topk; t++) {
+                    size_t idx = b * params.o_batch_stride + 
+                                h * params.o_head_stride +
+                                s * params.o_row_stride + t;
+                    std::cout << cpu_output[idx] << " ";
+                }
+                std::cout << std::endl;
+            }
+            std::cout << std::endl;
+        }
+    }
     
+    // Output CPU results
+    std::cout << "\nCPU results:\n";
+    std::cout << "CPU indices:\n";
+    for (int b = 0; b < batch_size; b++) {
+        std::cout << "Batch " << b << ":\n";
+        for (int h = 0; h < num_heads; h++) {
+            std::cout << "  Head " << h << ":\n";
+            for (int s = 0; s < seq_len; s++) {
+                std::cout << "    Seq " << s << ": ";
+                for (int t = 0; t < topk; t++) {
+                    size_t idx = b * params.o_batch_stride + 
+                                h * params.o_head_stride +
+                                s * params.o_row_stride + t;
+                    std::cout << h_o[idx] << " ";
+                }
+                std::cout << std::endl;
+            }
+            std::cout << std::endl;
+        }
+    }
+
     // Cleanup
     delete[] h_q;
     delete[] h_k;

@@ -66,7 +66,7 @@ void run_fused_mtkernel(Flash_fwd_params &params, cudaStream_t stream) {
 
     const int num_m_block = (params.seqlen_q + Kernel_traits::kBlockM - 1) / Kernel_traits::kBlockM;
     dim3 grid(num_m_block, params.b, params.h);
-
+    // printf("grid: %d, %d, %d\n", grid.x, grid.y, grid.z);
     // collect the running time of the kernel
     cudaEvent_t start, stop;
     CHECK_CUDA(cudaEventCreate(&start));
@@ -95,7 +95,7 @@ void run_fused_mtkernel(Flash_fwd_params &params, cudaStream_t stream) {
     CHECK_CUDA(cudaEventDestroy(start));
     CHECK_CUDA(cudaEventDestroy(stop));
 
-    printf("GPU time: %f ms\n", gpu_milliseconds);
+    printf("Fused Kernel GPU time: %f ms\n", gpu_milliseconds);
 }
 
 

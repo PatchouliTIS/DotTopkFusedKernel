@@ -21,39 +21,38 @@ set(INCLUDE_DIRS ${PROJECT_SOURCE_DIR}/include)
 include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 # include_directories(${Python_INCLUDE_DIRS})
 
-# Set source files
-set(SOURCES
-    src/test_flash_attn.cu
-)
-# Create executable
-add_executable(test_flash_attn ${SOURCES})
-# add_definitions("-g -G")
+# Create separate executables for each source file
+add_executable(torch_api_test src/torch_api_test.cu)
+add_executable(test_flash_attn src/test_flash_attn.cu)
 
-# Set CUDA specific flags
-set_target_properties(test_flash_attn PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-    CUDA_ARCHITECTURES "80"
-)
+# Set CUDA specific properties for both targets
+foreach(target torch_api_test test_flash_attn)
+    set_target_properties(${target} PROPERTIES
+        CUDA_SEPARABLE_COMPILATION ON
+        CUDA_ARCHITECTURES "80"
+    )
 
-# Include directories
-target_include_directories(test_flash_attn PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
-    ${INCLUDE_DIRS}
-    # ${Python_INCLUDE_DIRS}
-)
+    # Include directories for each target
+    target_include_directories(${target} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+        ${INCLUDE_DIRS}
+        # ${Python_INCLUDE_DIRS}
+    )
 
-target_link_libraries(test_flash_attn PRIVATE ${TORCH_LIBRARIES})
+    # Link libraries for each target
+    target_link_libraries(${target} PRIVATE ${TORCH_LIBRARIES})
 
-# Set compiler flags
-target_compile_options(test_flash_attn PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>:
-        --expt-relaxed-constexpr
-        --extended-lambda
-        -O2
-        -std=c++17
-        # -g
-        # -G
-        -arch=sm_80
-    >
-)
+    # Set compiler flags for each target
+    target_compile_options(${target} PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:
+            --expt-relaxed-constexpr
+            --extended-lambda
+            -O2
+            -std=c++17
+            -arch=sm_80
+            -g
+            -G
+        >
+    )
+endforeach()
